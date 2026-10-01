@@ -1,0 +1,5 @@
+# The live database: accounts, PIN/password hashes and readings. Never commit it.
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.DS_Store

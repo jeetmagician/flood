@@ -1,0 +1,113 @@
+=====================================================================
+  AQUAIOTS  -  everything, in one folder
+  Suranjeet Choudhury            1 October 2026
+=====================================================================
+
+Four folders. Read this page, then go to the one you need.
+
+
+1-firmware/            the code that goes on the boards
+---------------------------------------------------------------------
+
+  node_sender/
+      ESP32 + ultrasonic sensor. This is the board that goes out to
+      the water. Solar and battery, no internet, no SIM.
+      Nothing in this file needs editing - every setting is entered
+      later from its own web page at 192.168.4.1.
+
+  node_receiver_8266_cloud/           <-- USE THIS ONE
+      ESP8266 + LoRa + siren relay + LED. Sits at your house on
+      mains power and your WiFi.
+      Keeps its own hotspot at 192.168.4.1 AND uploads to your
+      website at the same time.
+      FILL IN the block at the top: your WiFi name, your WiFi
+      password, your domain.
+
+  node_receiver_8266_offline/
+      The same receiver without the uploading. Use it if you have
+      no website yet, or no internet where the receiver sits.
+      Everything local still works: the dashboard, the LED, the
+      siren.
+
+  Each sketch sits in a folder with the same name as the file. The
+  Arduino IDE requires that - do not move the .ino files out of
+  their folders or the IDE will refuse to open them.
+
+
+2-website/             the three files that go on your hosting
+---------------------------------------------------------------------
+
+  index.html     the public site and the client console
+  admin.html     your own portal, separate login
+  api.php        the entire backend, one file
+  .htaccess      keeps the database out of the browser. DO NOT SKIP.
+  README.txt     full instructions - upload, SSL, MySQL, how clients
+                 sign in, what the admin portal shows and does not
+
+  Upload all four into public_html.
+  Then open admin.html IMMEDIATELY and create your administrator,
+  before anyone else can.
+
+  The database creates itself on first use. There is no fifth file
+  to install.
+
+
+3-documents/           the circuit diagrams and test procedures
+---------------------------------------------------------------------
+
+  Flood_Node_Circuit_Diagrams.pdf   19 pages. Real-component layouts,
+                                    schematics, pin tables, and where
+                                    and how to install it outdoors.
+  Flood_Node_Firmware.pdf            6 pages. The firmware explained.
+  Bench_Test_Ultrasonic_LoRa.pdf    12 pages. The desk test to run
+                                    before buying any hosting.
+  LED_Level_Indicator_Circuit.pdf    2 pages. The brightness-follows-
+                                    the-water LED.
+  Siren_220V_Circuit.pdf             2 pages. The mains relay. Read
+                                    this one properly before wiring
+                                    anything to 220 V.
+
+
+4-older-versions/      superseded, kept only so nothing is lost
+---------------------------------------------------------------------
+
+  Earlier sketches from the build: the first bench test, the ESP32-C3
+  receiver before we moved to the ESP8266, the tank-only versions, and
+  the very first node and gateway drafts.
+
+  You do not need any of these. They are here in case you want to look
+  back at how something worked at an earlier stage.
+
+
+---------------------------------------------------------------------
+THE SHORTEST POSSIBLE PATH
+---------------------------------------------------------------------
+
+  1. Install the Arduino IDE, both board packages, and the LoRa
+     library by Sandeep Mistry.
+  2. Wire and flash the sender. Set the tank height at 192.168.4.1.
+  3. Wire and flash the receiver, offline version first.
+  4. Bench test on your desk: move a book under the sensor, watch the
+     number change at 192.168.4.1. Do not go further until this works.
+  5. Buy the domain and hosting. Upload the four website files.
+  6. Create your administrator at /admin.html.
+  7. Reflash the receiver with the cloud version, filling in your WiFi
+     and your domain.
+  8. Read the key off 192.168.4.1, activate it on the website, choose
+     a PIN, write down the client ID you are given.
+  9. Install it outdoors.
+
+  Steps 1 to 4 need no internet, no domain and no money beyond the
+  parts. Do them first.
+
+
+---------------------------------------------------------------------
+THE ONE THING WORTH REMEMBERING
+---------------------------------------------------------------------
+
+  Sender -> air -> receiver -> your router -> your domain -> any phone.
+
+  Only one hop in that chain needs internet, and it is the one sitting
+  safely on a roof rather than standing in a flood. If the internet
+  dies, the local page, the LED and the siren all keep working - the
+  siren decides on the receiver itself, for exactly this reason.

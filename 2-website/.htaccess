@@ -1,0 +1,19 @@
+# Keep the database out of the browser. Without this, anyone who guesses
+# the filename can download every reading and every password hash.
+<Files "aquaiots.sqlite">
+  Require all denied
+</Files>
+<Files "aquaiots.sqlite-wal">
+  Require all denied
+</Files>
+<Files "aquaiots.sqlite-shm">
+  Require all denied
+</Files>
+
+# Apache 2.2 fallback, for older shared hosting.
+<IfModule !mod_authz_core.c>
+  <Files "aquaiots.sqlite*">
+    Order allow,deny
+    Deny from all
+  </Files>
+</IfModule>
