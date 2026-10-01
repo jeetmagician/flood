@@ -223,11 +223,24 @@ start screen may reveal which keys or client IDs exist.
   created by the file itself on first request.
 - The front end is plain ES5-era JavaScript in one `<script>`, no framework, no
   bundler, no npm. Pages are self-contained single files: the logo, founder photo
-  and social icons are embedded as base64 data URIs (WebP/PNG), so the upload is
-  still just the four site files. Keep it that way.
-- Design tokens live in `:root` in each page. Dark single-theme by intent.
+  social icons and the circuit texture are embedded as base64 data URIs
+  (WebP/PNG), so the upload is still just the four site files. Keep it that way;
+  index.html is about 320 KB because of them.
+- Design tokens live in `:root` in each page. Dark is the default and the brand
+  look; a light theme exists behind a switch in the top bar (the founder asked for
+  it). Light overrides live in `:root[data-theme="light"]`, the choice is kept in
+  `localStorage` as `aq_theme`, and a tiny script in `<head>` applies it before
+  first paint. Never hard-code a colour in CSS or SVG: use a token (`var(--line)`,
+  `var(--tank-in)`, `--ok-bg` ...) so both themes work. SVG fills that need a
+  token go in `style="fill:var(--x)"`, because attributes cannot hold `var()`.
   Display face Bricolage Grotesque, body IBM Plex Sans, mono IBM Plex Mono.
-  Accent `--cy: #37C6E8`. Status colours are separate from the accent.
+  Accent `--cy: #37C6E8` (darkened to `#0B7FA6` in light for text contrast).
+  Status colours are separate from the accent.
+- Background: a circuit-board photo (IoT flavour) sits behind every view as a
+  faint texture. It is stored as a luminance-to-alpha WebP in `--pcb` and used as a
+  CSS mask on `body::before`, coloured by `--pcb-color` at `--pcb-op` opacity, so
+  one image serves both themes and never competes with text. Keep the opacity low.
+  The source photo is only 480x360, so never show it as a plain full-bleed picture.
 - All distances are millimetres, integer, everywhere — firmware, wire format,
   database, API. Metres appear only in rendered text.
 - Comments in the firmware explain *why*, especially where a line looks wrong
