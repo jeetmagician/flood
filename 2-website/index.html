@@ -903,6 +903,7 @@
       <div class="stat"><div class="lab">Nodes</div><div class="num" id="sD">0</div></div>
       <div class="stat"><div class="lab">Reporting now</div><div class="num" id="sO">0</div></div>
       <div class="stat" id="alertStat"><div class="lab">In alert</div><div class="num" id="sA">0</div></div>
+      <div class="stat" id="lostStat"><div class="lab">Sensor lost</div><div class="num" id="sL">0</div></div>
     </div>
 
     <div class="toolbar">
@@ -910,6 +911,7 @@
       <div class="seg" id="adSeg">
         <button type="button" class="on" data-f="all">All</button>
         <button type="button" data-f="alert">Alert</button>
+        <button type="button" data-f="nosensor">Sensor lost</button>
         <button type="button" data-f="offline">Offline</button>
       </div>
     </div>
@@ -1201,7 +1203,15 @@ function refresh(){
   }).catch(function(){ /* a dropped poll is not worth shouting about */ });
 }
 
-function isMatch(n){ return (n.mode === 1) === (portalKind === 1); }
+/* A node that has never reported has no known kind yet, so it belongs to
+   whichever view the client is looking at. */
+function isMatch(n){ return !n.latest || (n.mode === 1) === (portalKind === 1); }
+
+function dur(s){
+  if (s < 90) return s + ' s';
+  if (s < 5400) return Math.round(s / 60) + ' min';
+  return Math.round(s / 3600) + ' h';
+}
 
 function draw(){
   var bar = $('nodebar'); bar.innerHTML = '';
@@ -1250,11 +1260,15 @@ function paint(n){
   var DEPTH = Math.max(1, n.depth_mm || (r && r.depth_mm) || 1);
   var DANGER = n.danger_mm || (r && r.danger_mm) || 0;
   var level = r ? r.level_mm : -1;
-  var fresh = n.online && level >= 0;
+  // 'nosensor': the receiver is online but its last upload said it cannot hear
+  // the sensor. 'waiting': registered, no sensor packet yet. Neither is a live reading.
+  var lost = !mismatch && n.state === 'nosensor';
+  var waiting = !mismatch && n.online && n.state === 'waiting';
+  var fresh = n.online && level >= 0 && !lost;
   var alert = fresh && !!(r && r.alert);
   var warn  = fresh && !alert && DANGER > 0 && level >= DANGER * 0.85;
-  var col    = alert ? '#F0705A' : (warn ? '#E3AE4B' : '#2496C2');
-  var accent = alert ? 'var(--bad)' : (warn ? 'var(--warn)' : 'var(--cy)');
+  var col    = lost ? '#6C8794' : (alert ? '#F0705A' : (warn ? '#E3AE4B' : '#2496C2'));
+  var accent = lost ? 'var(--fg-dim)' : (alert ? 'var(--bad)' : (warn ? 'var(--warn)' : 'var(--cy)'));
 
   $('gTank').style.display = home ? '' : 'none';
   $('gRiv').style.display  = home ? 'none' : '';
@@ -1267,19 +1281,23 @@ function paint(n){
   $('l2').textContent = home ? 'Until overflow' : 'Below danger by';
   $('nodeName').textContent = n.name + ' \u00b7 ' + n.dev_key;
   var note = $('kindNote');
-  note.hidden = !mismatch;
+  note.hidden = !(mismatch || lost || waiting);
   if (mismatch) note.textContent = 'This node is a ' + (real.mode === 1 ? 'water tank' : 'river') + ' sensor, so it shows offline in the ' + (home ? 'Water tank' : 'River') + ' view. Switch to ' + (real.mode === 1 ? 'Water tank' : 'River') + ' to see it live.';
-  $('seen').textContent = mismatch ? 'not a ' + kindName + ' node' : (n.online ? 'updated ' + ago(n.age) : 'offline, last seen ' + ago(n.age));
+  else if (lost) note.textContent = 'The receiver is online but has not heard the sensor ' + (n.sensor_age === null ? 'since it started' : 'for ' + dur(n.sensor_age)) + '. The numbers below are the last it received, not live. Check the sensor unit: power, antenna and range.';
+  else if (waiting) note.textContent = 'The receiver is online and registered but has not heard the sensor yet. Check that the sensor unit is powered and in range.';
+  $('seen').textContent = mismatch ? 'not a ' + kindName + ' node' : (lost ? 'receiver online \u00b7 sensor not heard' : (n.online ? 'updated ' + ago(n.age) : 'offline, last seen ' + ago(n.age)));
 
   var st = $('state');
   if (!n.online){ st.className = 'state s-off'; st.textContent = 'OFFLINE'; }
+  else if (lost){ st.className = 'state s-bd'; st.textContent = 'SENSOR LOST'; }
+  else if (waiting){ st.className = 'state s-wn'; st.textContent = 'WAITING FOR SENSOR'; }
   else { st.className = 'state ' + (alert ? 's-bd' : (warn ? 's-wn' : 's-ok'));
          st.textContent = alert ? (home ? 'OVERFLOWING' : 'DANGER') : (warn ? 'RISING' : 'NORMAL'); }
 
   if (level >= 0){
     var pct = Math.max(0, Math.min(100, 100 * level / DEPTH));
     $('v1').textContent = m2(level);
-    $('t1').textContent = Math.round(level) + ' mm of ' + DEPTH + ' mm';
+    $('t1').textContent = Math.round(level) + ' mm of ' + DEPTH + ' mm' + (lost ? ' \u00b7 last known' : '');
     $('m1').style.width = pct + '%'; $('m1').style.background = accent;
     var rem = DANGER - level;
     $('v2').textContent = m2(Math.max(0, rem));
@@ -1294,7 +1312,7 @@ function paint(n){
     $('pc2').textContent = Math.round(pct) + '%';
   } else {
     $('v1').textContent = '—'; $('v2').textContent = '—';
-    $('t1').textContent = 'no echo from the sensor'; $('t2').textContent = ' ';
+    $('t1').textContent = waiting ? 'no sensor data yet' : 'no echo from the sensor'; $('t2').textContent = ' ';
     $('m1').style.width = '0%'; $('wg').style.display = 'none';
     $('wr').setAttribute('height','0'); $('pc2').textContent = '—';
   }
@@ -1356,6 +1374,7 @@ var setupMode = false, adTimer = null, adData = null, adFilter = 'all';
 
 function pill(state){
   if (state === 'alert')   return '<span class="pill p-bd">alert</span>';
+  if (state === 'nosensor') return '<span class="pill p-bd">sensor lost</span>';
   if (state === 'offline') return '<span class="pill p-off">offline</span>';
   if (state === 'waiting') return '<span class="pill p-off">waiting</span>';
   return '<span class="pill p-ok">ok</span>';
@@ -1420,6 +1439,8 @@ function renderBoard(){
   $('sO').textContent = t.online;
   $('sA').textContent = t.alerts;
   $('alertStat').className = t.alerts > 0 ? 'stat hot' : 'stat';
+  $('sL').textContent = t.lost || 0;
+  $('lostStat').className = t.lost > 0 ? 'stat hot' : 'stat';
 
   var tb = $('rows'); tb.innerHTML = '';
   var shown = 0;

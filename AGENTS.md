@@ -49,6 +49,8 @@ the receiver from the last three packets and never waits for the server.
 3-documents/                      Circuit diagrams and test procedures (PDF).
 4-older-versions/                 Superseded sketches. Do not edit or revive.
 START-HERE.txt                    One-page tour of the folder, for the founder.
+IMPLEMENTATION-GUIDE.md           Step-by-step: boards, Arduino IDE, desk test, hosting,
+                                  receiver, client hand-over, outdoors. Start here to build it.
 ```
 
 ---
@@ -195,6 +197,14 @@ activate tabs, and a switch in the dashboard header, remembered in `localStorage
 not match the chosen view is drawn as OFFLINE with no numbers and a note telling
 the client which view shows it. The server never receives the choice and no mode
 is ever written. Do not turn it into a setting.
+
+**Node states on the client dashboard:** NORMAL, RISING, DANGER/OVERFLOWING, OFFLINE
+(no upload for 180 s), **SENSOR LOST** (receiver online, sensor unheard: grey water,
+values labelled "last known", an amber note) and **WAITING FOR SENSOR** (registered,
+no sensor packet ever; belongs to whichever Tank/River view is open, since its kind is
+not known yet). On the admin board these are the pills `ok / alert / sensor lost /
+offline / waiting`, a "Sensor lost" count and filter. They come from `devices.sensor_ok`
+and the last alert flag only, so the admin board still never touches `level_mm`.
 
 **Wrong key, wrong PIN and unknown key still give one message.** Nothing on the
 start screen may reveal which keys or client IDs exist.
@@ -350,9 +360,21 @@ X-Token: AQI<chip id><flash id>
 {"level":1840,"gap":1160,"depth":3000,"danger":2400,"mode":0,"alert":0,"rssi":-92,"snr":7.5}
 ```
 
-Reply: `{"ok":true,"code":"K7M2-9QXA","paired":false}`. The site decides the state
-from this: `alert` = 1 is DANGER, level at 85% of the danger mark is RISING, no
-upload for 180 s is OFFLINE. The siren never depends on any of it.
+Reply: `{"ok":true,"code":"K7M2-9QXA","paired":false,"sensor":true}`. The site decides
+the state from this: `alert` = 1 is DANGER, level at 85% of the danger mark is
+RISING, no upload for 180 s is OFFLINE, and `age` (below) decides SENSOR LOST. The
+siren never depends on any of it.
+
+**`age`: how a dead sensor is noticed.** The receiver adds `"age":N` = seconds since
+it last heard the *sensor* over LoRa (`-1` = never). The sender transmits every
+500 ms, so a healthy sensor is heard twice a second. Server rule (`SENSOR_LOST_SEC`,
+30, at the top of `api.php`): if `age` is `-1` or above it, the upload only marks the
+receiver online and `devices.sensor_ok = 0`; **no reading row is stored**, so the
+chart draws no flat line and the stale level is never passed off as live. A payload
+with no `age` (older firmware) counts as fresh, so old receivers keep working.
+Columns `devices.sensor_ts` / `sensor_ok` are added to an older database
+automatically on first request (`PRAGMA table_info` / `SHOW COLUMNS`, then
+`ALTER TABLE`).
 
 ---
 
@@ -385,10 +407,20 @@ existed and matched this file. In order, the work was:
    colour). Toggle verified to switch, persist across reload and recolour the wave.
 9. **Docs.** `README.txt`, `START-HERE.txt`, this file and its copies updated;
    firmware copied to `1-firmware/txt/`.
-10. **Git.** Repository created and pushed to https://github.com/jeetmagician/flood
+10. **Sensor-lost detection (end to end).** Cloud receiver now uploads `age`;
+    `api.php` stores no reading and flags `sensor_ok = 0` when the sensor is unheard;
+    both portals show it (see "age" above). Tested on the existing old-layout database:
+    the migration ran; an old-style payload counted as fresh; age 1 stored a reading;
+    age 120 and age -1 stored none and gave state `nosensor`; age 0 recovered; a brand
+    new receiver with age -1 registered, returned a key and stored no readings; the
+    admin response held no readings. The dashboard text was read back through a
+    headless browser. The new firmware line was compiled with format checking on a PC
+    (not for the board) and printed the right JSON for never / 5 s / 60 s / 0 s.
+11. **`IMPLEMENTATION-GUIDE.md`** written: the full build, test and hand-over path.
+12. **Git.** Repository created and pushed to https://github.com/jeetmagician/flood
     (public). Commits so far: `909639a` first import, `1e38ea4` two-door site and
     brand, `89998aa` docs and `.txt` firmware, `9b371c1` texture and theme switch,
-    then the commit that added this section.
+    `7d65c58` run/firmware guide and build log, then the sensor-lost fix and guide.
 
 **Tested against the real PHP backend (via curl and a headless browser):** admin
 setup once then refusal, admin login and wrong password, no data without a session,
@@ -413,20 +445,19 @@ layout on a real phone, and the tank view, admin board and story page in light m
   before any commercial deployment, not for prototyping.
 - No SMS fallback. Worth adding (SIM800L on the receiver) for sites with no
   broadband, where an alert text beats no alert at all.
-- **The website cannot tell the sensor has died.** The receiver uploads its last
-  known level every 25 s even when no LoRa packet has arrived, so a dead sender
-  looks online and normal on the site (the siren still latches locally). Fix needs
-  a firmware change (send a stale flag, or skip the upload) and a matching
-  `api.php` change. Not done; firmware changes are suggestions for a human.
 - **`readReply()` in the cloud receiver uses Arduino `String`**
   (`http.getString()`), against the fixed-`char`-buffers rule, on every upload.
   Replace with a bounded read into a `char` buffer.
-- Until its first radio packet the receiver defaults to mode river, so a brand-new
-  tank node can briefly look like a river.
+- A receiver flashed with the *old* sketch still works but cannot report `age`, so a
+  dead sensor on it still looks live. Reflash the cloud receiver to get SENSOR LOST.
+- A WiFi-setup box on the receiver's own page (name, password, Connect) so the WiFi can
+  change per site without reflashing has been proposed, not built. It would not break
+  the rule that the *website* never asks for a WiFi password: it would stay on the device.
 - No optional "Site name" per client yet. The `clients.label` column exists and
   nothing fills it; it would let the admin see which site a client ID is without
   seeing readings.
 - Phone layout is unverified on a real phone; headless Chrome cannot go below
   about 500 px wide.
+- The new firmware line has been compiled only on a PC; it has not been flashed to a board.
 - The lockout (six wrong PINs), device post throttle, 90-day pruning, MySQL mode
   and real cPanel hosting are untested.

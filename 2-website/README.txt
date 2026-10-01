@@ -69,6 +69,7 @@ Other settings at the top of api.php you may want to change:
     const KEEP_DAYS   = 90;    // readings older than this are deleted
     const MIN_GAP_SEC = 5;     // a device may not post faster than this
     const ONLINE_SEC  = 180;   // no packet for this long = offline
+    const SENSOR_LOST_SEC = 30; // receiver online but sensor unheard this long = sensor lost
     const MAX_TRIES   = 6;     // wrong PINs before a client is locked out
     const LOCK_SEC    = 900;   // how long that lockout lasts
 
@@ -183,6 +184,19 @@ FORGOTTEN PINS. There is no self-service reset. When a client forgets
 their PIN, ask them to read you the device key off their receiver's
 own page - only someone standing next to the device can do that - and
 then reset it for them in the database.
+
+
+---------------------------------------------------------------------
+SENSOR LOST
+---------------------------------------------------------------------
+
+The receiver tells the site how many seconds ago it last heard the
+sensor over LoRa. If that passes SENSOR_LOST_SEC the client sees SENSOR
+LOST (grey water, "last known" values) and you see a "sensor lost" pill
+and count on the admin board. No fake reading is stored. A receiver
+flashed with the older sketch still works but cannot report this - flash
+the current node_receiver_8266_cloud to get it. An existing database is
+upgraded automatically; nothing to do by hand.
 
 
 ---------------------------------------------------------------------

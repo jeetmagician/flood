@@ -397,11 +397,17 @@ void uploadNow() {
 #if CLOUD_ENABLE
   if (WiFi.status() != WL_CONNECTED) { cloudLast = -1; return; }
 
-  char body[220];
+  // How long since the SENSOR last got a packet through to us, in seconds, or -1
+  // if it never has. Without this the site cannot tell a quiet river from a dead
+  // sender: we would keep re-uploading the last level and it would look live.
+  // The server stores nothing as a reading once this passes SENSOR_LOST_SEC.
+  long sensorAge = (goodCount > 0) ? (long)((millis() - lastHeard) / 1000UL) : -1L;
+
+  char body[240];
   snprintf(body, sizeof(body),
     "{\"level\":%d,\"gap\":%d,\"depth\":%u,\"danger\":%u,"
-    "\"mode\":%u,\"alert\":%d,\"rssi\":%d,\"snr\":%.1f}",
-    levelMM, gapMM, depthMM, dangerMM, mode, alert ? 1 : 0, rssi, snr);
+    "\"mode\":%u,\"alert\":%d,\"rssi\":%d,\"snr\":%.1f,\"age\":%ld}",
+    levelMM, gapMM, depthMM, dangerMM, mode, alert ? 1 : 0, rssi, snr, sensorAge);
 
   HTTPClient http;
   bool ok;

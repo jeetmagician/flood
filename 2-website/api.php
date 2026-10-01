@@ -5,6 +5,9 @@
 
    DEVICE
      POST  ingest        device -> server.  Auth: X-Token header
+                         `age` = seconds since the receiver last heard the SENSOR
+                         over LoRa (-1 = never). Without it the reading is taken
+                         as fresh, so older firmware keeps working.
    CLIENT PORTAL
      POST  claim         {key, pin}          activate a device, makes a client
      POST  login         {id, pin}           id = device key OR client id
@@ -35,6 +38,7 @@ const SQLITE_FILE = __DIR__ . '/aquaiots.sqlite';
 const KEEP_DAYS   = 90;      // readings older than this are pruned
 const MIN_GAP_SEC = 5;       // a device may not post faster than this
 const ONLINE_SEC  = 180;     // no packet for this long = offline
+const SENSOR_LOST_SEC = 30;  // receiver online but sensor unheard this long = sensor lost
 const MAX_TRIES   = 6;       // wrong PINs before a client is locked out
 const LOCK_SEC    = 900;     // how long that lockout lasts
 
@@ -105,7 +109,9 @@ function db(): PDO {
         depth_mm   INT DEFAULT 0,
         danger_mm  INT DEFAULT 0,
         last_seen  INT,
-        created    INT
+        created    INT,
+        sensor_ts  INT,                  -- when the receiver last heard the sensor
+        sensor_ok  INT DEFAULT 1         -- did the last upload say the sensor is heard?
     )");
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS readings (
@@ -123,6 +129,14 @@ function db(): PDO {
     )");
     try { $pdo->exec('CREATE INDEX IF NOT EXISTS ix_read ON readings (device_id, ts)'); }
     catch (PDOException $e) { /* already there */ }
+
+    // A database created before sensor tracking has no such columns.
+    // CREATE TABLE IF NOT EXISTS will not add them, so add them once.
+    $have = [];
+    if (USE_MYSQL) { foreach ($pdo->query('SHOW COLUMNS FROM devices') as $c) $have[] = $c['Field']; }
+    else           { foreach ($pdo->query('PRAGMA table_info(devices)') as $c) $have[] = $c['name']; }
+    if (!in_array('sensor_ts', $have, true)) $pdo->exec('ALTER TABLE devices ADD COLUMN sensor_ts INT');
+    if (!in_array('sensor_ok', $have, true)) $pdo->exec('ALTER TABLE devices ADD COLUMN sensor_ok INT DEFAULT 1');
 
     return $pdo;
 }
@@ -256,6 +270,21 @@ case 'ingest': {
              'paired' => $dev['client_id'] !== null]);
     }
 
+    // Seconds since the receiver last heard the sensor. Absent = older firmware:
+    // treat as fresh. -1 = never heard it. Above SENSOR_LOST_SEC = sensor lost.
+    $age   = isset($b['age']) && is_numeric($b['age']) ? (int)$b['age'] : 0;
+    $fresh = $age >= 0 && $age <= SENSOR_LOST_SEC;
+
+    if (!$fresh) {
+        // The receiver is alive but the sensor is not being heard. Do NOT store
+        // its stale numbers as a new reading, or the chart would draw a flat line
+        // and the site would look normal. Record only that the receiver is online.
+        $pdo->prepare('UPDATE devices SET last_seen=?, sensor_ok=0, sensor_ts=? WHERE id=?')
+            ->execute([$now, $age >= 0 ? $now - $age : null, $dev['id']]);
+        out(['ok' => true, 'code' => $dev['dev_key'], 'paired' => $dev['client_id'] !== null,
+             'sensor' => false]);
+    }
+
     $level  = i($b, 'level', -1);
     $gap    = i($b, 'gap', -1);
     $depth  = max(1, i($b, 'depth', 1));
@@ -269,15 +298,16 @@ case 'ingest': {
         ->execute([$dev['id'], $now, $level, $gap, $depth, $danger, $mode, $alert,
                    i($b, 'rssi'), (float)($b['snr'] ?? 0)]);
 
-    $pdo->prepare('UPDATE devices SET last_seen=?, mode=?, depth_mm=?, danger_mm=? WHERE id=?')
-        ->execute([$now, $mode, $depth, $danger, $dev['id']]);
+    $pdo->prepare('UPDATE devices SET last_seen=?, mode=?, depth_mm=?, danger_mm=?, sensor_ok=1, sensor_ts=? WHERE id=?')
+        ->execute([$now, $mode, $depth, $danger, $now - $age, $dev['id']]);
 
     if (random_int(1, 200) === 1) {
         $pdo->prepare('DELETE FROM readings WHERE ts < ?')
             ->execute([$now - KEEP_DAYS * 86400]);
     }
 
-    out(['ok' => true, 'code' => $dev['dev_key'], 'paired' => $dev['client_id'] !== null]);
+    out(['ok' => true, 'code' => $dev['dev_key'], 'paired' => $dev['client_id'] !== null,
+         'sensor' => true]);
 }
 
 /* ---------- client portal -------------------------------------------- */
@@ -413,7 +443,7 @@ case 'rename': {
 
 case 'nodes': {
     $c = client_or_401($pdo);
-    $s = $pdo->prepare('SELECT id, dev_key, name, mode, depth_mm, danger_mm, last_seen
+    $s = $pdo->prepare('SELECT id, dev_key, name, mode, depth_mm, danger_mm, last_seen, sensor_ts, sensor_ok
                         FROM devices WHERE client_id = ? ORDER BY id');
     $s->execute([$c['id']]);
     $rows = $s->fetchAll();
@@ -425,6 +455,11 @@ case 'nodes': {
         $r['age']    = $r['last_seen'] ? $now - (int)$r['last_seen'] : null;
         $r['online'] = $r['age'] !== null && $r['age'] < ONLINE_SEC;
         $r['state']  = state_of($r['latest'], $now);
+        // Receiver online, but its last upload said the sensor is not heard.
+        $r['sensor_lost'] = $r['online'] && $r['sensor_ok'] !== null && (int)$r['sensor_ok'] === 0;
+        $r['sensor_age']  = $r['sensor_ts'] ? $now - (int)$r['sensor_ts'] : null;
+        if ($r['sensor_lost'] && $r['latest'] !== null) $r['state'] = 'nosensor';
+        unset($r['sensor_ts'], $r['sensor_ok']);
     }
     unset($r);
 
@@ -511,12 +546,12 @@ case 'admin_clients': {
     $rows = $pdo->query('SELECT id, code, label, created, last_login FROM clients ORDER BY id DESC')
                 ->fetchAll();
 
-    $dq = $pdo->prepare('SELECT id, dev_key, name, mode, last_seen FROM devices
+    $dq = $pdo->prepare('SELECT id, dev_key, name, mode, last_seen, sensor_ok FROM devices
                          WHERE client_id = ? ORDER BY id');
     $aq = $pdo->prepare('SELECT alert, ts FROM readings WHERE device_id = ?
                          ORDER BY ts DESC LIMIT 1');
 
-    $onlineTotal = 0; $alertTotal = 0; $devTotal = 0;
+    $onlineTotal = 0; $alertTotal = 0; $devTotal = 0; $lostTotal = 0;
 
     foreach ($rows as &$c) {
         $dq->execute([$c['id']]);
@@ -526,10 +561,12 @@ case 'admin_clients': {
             $d['online'] = $d['age'] !== null && $d['age'] < ONLINE_SEC;
             $aq->execute([$d['id']]);
             $last = $aq->fetch() ?: null;
+            $lost = $d['online'] && $d['sensor_ok'] !== null && (int)$d['sensor_ok'] === 0;
             $d['state'] = $last
-                ? (!$d['online'] ? 'offline' : ((int)$last['alert'] === 1 ? 'alert' : 'normal'))
+                ? (!$d['online'] ? 'offline' : ($lost ? 'nosensor' : ((int)$last['alert'] === 1 ? 'alert' : 'normal')))
                 : 'waiting';
-            unset($d['last_seen']);
+            unset($d['last_seen'], $d['sensor_ok']);
+            if ($d['state'] === 'nosensor') $lostTotal++;
             $devTotal++;
             if ($d['online']) $onlineTotal++;
             if ($d['state'] === 'alert') $alertTotal++;
@@ -541,7 +578,7 @@ case 'admin_clients': {
 
     out(['ok' => true, 'clients' => $rows, 'now' => $now,
          'totals' => ['clients' => count($rows), 'devices' => $devTotal,
-                      'online'  => $onlineTotal, 'alerts' => $alertTotal]]);
+                      'online'  => $onlineTotal, 'alerts' => $alertTotal, 'lost' => $lostTotal]]);
 }
 
 default:

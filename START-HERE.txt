@@ -4,6 +4,7 @@
 =====================================================================
 
 Four folders. Read this page, then go to the one you need.
+To BUILD the whole thing step by step, open IMPLEMENTATION-GUIDE.md.
 
 
 1-firmware/            the code that goes on the boards
