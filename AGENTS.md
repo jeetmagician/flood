@@ -286,6 +286,124 @@ the firmware posts `level`, `gap`, `depth`, `danger`, `mode`, `alert`, `rssi`,
 
 ---
 
+## Run it on localhost
+
+PHP is installed on the founder's Mac, so the real backend runs locally:
+
+```
+cd /Users/suranjeet/Desktop/Aquaiots/2-website
+php -S 127.0.0.1:8000          # stop it with Ctrl+C, or:  pkill -f "php -S"
+```
+
+| Link | What it opens |
+|---|---|
+| http://127.0.0.1:8000/index.html | Start screen: Client and Administrator sign-in |
+| http://127.0.0.1:8000/index.html#admin | Administrator board (sends you back to sign-in without an admin session) |
+| http://127.0.0.1:8000/index.html#client | Client dashboard (same rule, needs a client session) |
+| http://127.0.0.1:8000/index.html#how | The public story: how it works, why Aquaiots |
+| http://127.0.0.1:8000/index.html#founder | Founder section |
+| http://127.0.0.1:8000/index.html#contact | Contact: phone, address, social |
+
+The server stops when the terminal or session that started it ends; start it again
+with the command above. The local `aquaiots.sqlite` already holds the founder's test
+administrator (made through the setup form; the credentials are deliberately not
+written here) and a couple of simulated nodes. It is throw-away and git-ignored.
+
+A receiver on the desk cannot reach `127.0.0.1`. To bench-test the real firmware
+against the Mac, run `sudo php -S 0.0.0.0:80` in `2-website/`, set `CLOUD_HTTPS 0`
+and `CLOUD_HOST` to the Mac's LAN IP in the cloud sketch, and allow it through the
+Mac firewall. The firmware only speaks port 80 or 443.
+
+---
+
+## Firmware: which file to flash
+
+- **ESP8266 receiver: `node_receiver_8266_cloud.ino`.** This is the one for the
+  website: local dashboard, LED, siren *and* the uploader that produces the device
+  key. `node_receiver_8266_offline.ino` is the same without the uploader, for a desk
+  test with no WiFi or website, or a site with no internet. It never shows a key and
+  never reaches the site.
+- **ESP32 sender: `node_sender.ino`.** A separate board at the water.
+- The `.txt` copies in `1-firmware/txt/` are byte-identical to the `.ino` files.
+
+Arduino IDE, one-time: add `http://arduino.esp8266.com/stable/package_esp8266com_index.json`
+to Additional Boards Manager URLs and install **esp8266 by ESP8266 Community**; install
+**LoRa by Sandeep Mistry** from Library Manager. WiFi, web server, HTTP client, secure
+WiFi and SPI come with the board package. Board: *NodeMCU 1.0 (ESP-12E)* or *LOLIN
+(WEMOS) D1 mini*. ESP32 sender: use the board settings in Hard constraints above.
+
+Before flashing the cloud receiver edit `STA_SSID`, `STA_PASS` (2.4 GHz only) and
+`CLOUD_HOST` (the domain only, no `https://`); `CLOUD_HTTPS 1` needs SSL on the host.
+Wiring is in the sketch's header comment; the siren relay stays active-low on D4.
+
+After flashing: join `FloodNode-01` (password `flood1234`), open `192.168.4.1`, read the
+eight-character key in the blue bar, activate it on the site. Recommended order: flash
+the offline receiver first for the desk test, then the cloud one.
+
+**What the receiver sends** every 25 s (UPLOAD_SEC), and immediately when an alert
+starts:
+
+```
+POST https://<CLOUD_HOST>/api.php?a=ingest
+Content-Type: application/json
+X-Token: AQI<chip id><flash id>
+{"level":1840,"gap":1160,"depth":3000,"danger":2400,"mode":0,"alert":0,"rssi":-92,"snr":7.5}
+```
+
+Reply: `{"ok":true,"code":"K7M2-9QXA","paired":false}`. The site decides the state
+from this: `alert` = 1 is DANGER, level at 85% of the danger mark is RISING, no
+upload for 180 s is OFFLINE. The siren never depends on any of it.
+
+---
+
+## Build log: everything made so far
+
+Starting point: `api.php`, `index.html` (landing + console) and `admin.html` already
+existed and matched this file. In order, the work was:
+
+1. **Fixed `index.html` basics.** It had no doctype, charset or viewport; client-typed
+   node names were inserted as HTML (now text); the hero wave ignored reduced-motion.
+2. **Merged the site into one page.** Admin portal moved into `index.html`;
+   `admin.html` became a redirect. One backend fix: `logout` / `admin_logout` now
+   unset only their own session key (they used to destroy the whole session).
+3. **Redesigned to a professional, futuristic look.** Dark instrument panel, grid
+   hero with a live sample gauge (labelled "Sample data"), animated wave, four-step
+   chain, specs, six feature cards, founder, contact, footer, mobile menu, show/hide
+   PIN, busy buttons, admin board with search and All/Alert/Offline filter.
+4. **Two-door start screen.** `#login` shows the Client and Administrator cards;
+   `#client` and `#admin` are guarded by the server session; story pages moved behind
+   the menu. First run turns the Administrator card into the one-time setup form.
+5. **Logo.** The founder's full logo, background removed, in the top bar and start
+   screen; the drop alone as favicon.
+6. **Water tank / River view filter** on the client card and in the dashboard header
+   (see The website). Tested all four client-by-view combinations.
+7. **Founder photo, social icons, contact.** Photo embedded in the Founder section;
+   Facebook, Instagram and globe icons with the founder's links; customer care number
+   and address in a Contact section and in the footer of every view.
+8. **Circuit-board background and light/dark switch** (see Conventions). About 90
+   hard-coded colours became tokens. Fixed the chart gradient (it ignored the line
+   colour). Toggle verified to switch, persist across reload and recolour the wave.
+9. **Docs.** `README.txt`, `START-HERE.txt`, this file and its copies updated;
+   firmware copied to `1-firmware/txt/`.
+10. **Git.** Repository created and pushed to https://github.com/jeetmagician/flood
+    (public). Commits so far: `909639a` first import, `1e38ea4` two-door site and
+    brand, `89998aa` docs and `.txt` firmware, `9b371c1` texture and theme switch,
+    then the commit that added this section.
+
+**Tested against the real PHP backend (via curl and a headless browser):** admin
+setup once then refusal, admin login and wrong password, no data without a session,
+device ingest creating a device and returning its key, client activation, client login,
+identical message for wrong PIN and unknown key, node list and history, admin board
+containing no readings, tank/river filtering, theme toggle persistence.
+
+**Not tested:** real ESP hardware and the firmware as a whole, the six-wrong-PINs
+lockout, the 5 s post throttle, 90-day pruning, MySQL, real cPanel hosting, the phone
+layout on a real phone, and the tank view, admin board and story page in light mode.
+
+**Never recorded in any file:** the admin's email and password, and any client PIN.
+
+---
+
 ## Open items
 
 - No self-service PIN reset. A client who forgets theirs reads the device key
