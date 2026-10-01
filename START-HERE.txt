@@ -29,6 +29,9 @@ Four folders. Read this page, then go to the one you need.
       Everything local still works: the dashboard, the LED, the
       siren.
 
+  1-firmware/txt/ holds the same three sketches as plain .txt files,
+  for sharing or pasting. The .ino files are the originals.
+
   Each sketch sits in a folder with the same name as the file. The
   Arduino IDE requires that - do not move the .ino files out of
   their folders or the IDE will refuse to open them.
@@ -37,15 +40,17 @@ Four folders. Read this page, then go to the one you need.
 2-website/             the three files that go on your hosting
 ---------------------------------------------------------------------
 
-  index.html     the public site and the client console
-  admin.html     your own portal, separate login
+  index.html     the whole site: start screen with Client and
+                 Administrator sign-in, client dashboard, admin board
+  admin.html     only a redirect to index.html#admin
   api.php        the entire backend, one file
   .htaccess      keeps the database out of the browser. DO NOT SKIP.
   README.txt     full instructions - upload, SSL, MySQL, how clients
                  sign in, what the admin portal shows and does not
 
   Upload all four into public_html.
-  Then open admin.html IMMEDIATELY and create your administrator,
+  Then open your site IMMEDIATELY and create your administrator
+  on the Administrator card,
   before anyone else can.
 
   The database creates itself on first use. There is no fifth file
@@ -90,7 +95,7 @@ THE SHORTEST POSSIBLE PATH
   4. Bench test on your desk: move a book under the sensor, watch the
      number change at 192.168.4.1. Do not go further until this works.
   5. Buy the domain and hosting. Upload the four website files.
-  6. Create your administrator at /admin.html.
+  6. Create your administrator on the Administrator card of the start screen.
   7. Reflash the receiver with the cloud version, filling in your WiFi
      and your domain.
   8. Read the key off 192.168.4.1, activate it on the website, choose

@@ -34,6 +34,9 @@ the receiver from the last three packets and never waits for the server.
   node_sender/                    ESP32. Ultrasonic + LoRa TX + setup AP.
   node_receiver_8266_cloud/       ESP8266. LoRa RX + local dashboard + uploader.  <- current
   node_receiver_8266_offline/     Same without the uploader.
+  txt/                            The same three sketches as plain .txt, for sharing
+                                  or pasting. Copies: the .ino files are the source,
+                                  so re-copy after any firmware edit.
 2-website/
   index.html                      The whole site. Start screen (#login) has two doors,
                                   Client and Administrator; then the client dashboard
@@ -45,6 +48,7 @@ the receiver from the last three packets and never waits for the server.
   README.txt                      Deployment instructions.
 3-documents/                      Circuit diagrams and test procedures (PDF).
 4-older-versions/                 Superseded sketches. Do not edit or revive.
+START-HERE.txt                    One-page tour of the folder, for the founder.
 ```
 
 ---
@@ -148,10 +152,64 @@ it is one line away from being broken, so do not "improve" that query. Client
 PINs are hashed and never retrievable.
 
 **`admin_setup` works exactly once**, while the admins table is empty, then
-refuses forever. There is no password reset and no second admin.
+refuses forever. There is no password reset and no second admin. On the site it
+is the Administrator card of the start screen turning into a setup form on first
+run, so create the admin before sharing the address.
+
+**The Administrator sign-in is visible on the start screen, by decision.** An
+earlier design hid it behind `#admin`; the founder chose two visible doors. The
+form being visible grants nothing: every admin call checks the server session,
+and `#admin` or `#client` without one sends the visitor back to `#login`.
+
+**Client and admin share one PHP session cookie.** `logout` unsets only
+`$_SESSION['cid']` and `admin_logout` only `['aid']`, so one sign-out never ends
+the other. Do not go back to destroying the whole session.
+
+**Never commit credentials, the database or test data.** `aquaiots.sqlite*` is in
+`.gitignore` (it holds the admin hash and clients). The admin's email and password
+are typed into the setup form and live only in the database: never in a file, never
+in a doc. The repo is public.
 
 **Database errors go to the PHP error log, never to the browser** — they leak
 table names and paths. Every response path is `fail('Server error.', 500)`.
+
+---
+
+## The website
+
+One file, `index.html`, four views switched by the address hash and `route()`:
+
+| Hash | View | Who |
+|---|---|---|
+| none or `#login` | Start screen: Client card and Administrator card, side by side | everyone |
+| `#how` `#features` `#founder` `#contact` `#about` | The public story and Contact | everyone |
+| `#client` | Client dashboard | needs a client session |
+| `#admin` | Administrator status board | needs an admin session |
+
+A browser that already holds a session skips the start screen on first load.
+`admin.html` is only a redirect to `index.html#admin` so old bookmarks work.
+
+**Water tank / River on the client card.** A segmented choice on the sign-in and
+activate tabs, and a switch in the dashboard header, remembered in `localStorage`
+(`aq_kind`). It is a view filter and nothing more: a node whose byte-7 mode does
+not match the chosen view is drawn as OFFLINE with no numbers and a note telling
+the client which view shows it. The server never receives the choice and no mode
+is ever written. Do not turn it into a setting.
+
+**Wrong key, wrong PIN and unknown key still give one message.** Nothing on the
+start screen may reveal which keys or client IDs exist.
+
+**Brand and contact** (all public, all in `index.html`):
+- Logo: the full drop-and-wordmark logo in the top bar and on the start screen,
+  drop-only as favicon. Background removed so it sits on the dark panels; do not
+  recolour it. The dark-blue "Aqua" is faint on dark by design of the logo.
+- Founder photo: embedded, square crop, in the Founder section.
+- Customer care: +91 70024 51825. Address: Lachit Nagar, Guwahati, Assam 781007.
+- Facebook: https://www.facebook.com/share/1DrZnPoUhd/
+- Instagram: https://www.instagram.com/magician_jeet?stkn=MW9nNmh0Nmo3ODNwOQ==
+- The globe icon links to `https://aquaiots.com/`, which the founder has not
+  confirmed (the firmware defaults to `aquaiots.in`). Ask before changing.
+- Contact appears as a section on the story page and in the footer of every view.
 
 ---
 
@@ -164,7 +222,9 @@ table names and paths. Every response path is `fail('Server error.', 500)`.
 - SQLite by default; MySQL is a five-constant switch at the top. The schema is
   created by the file itself on first request.
 - The front end is plain ES5-era JavaScript in one `<script>`, no framework, no
-  bundler, no npm. Pages are self-contained single files.
+  bundler, no npm. Pages are self-contained single files: the logo, founder photo
+  and social icons are embedded as base64 data URIs (WebP/PNG), so the upload is
+  still just the four site files. Keep it that way.
 - Design tokens live in `:root` in each page. Dark single-theme by intent.
   Display face Bricolage Grotesque, body IBM Plex Sans, mono IBM Plex Mono.
   Accent `--cy: #37C6E8`. Status colours are separate from the accent.
@@ -181,10 +241,31 @@ The firmware cannot be compiled or flashed by an agent — it needs the Arduino
 IDE and a physical board. Changes to `1-firmware/` are suggestions for a human
 to flash and test.
 
-`index.html` and `admin.html` cannot be previewed meaningfully without PHP
-behind them; opened as plain files, every sign-in fails. That is expected, not a
-bug. Test against a real PHP server (`php -S 127.0.0.1:8000` in `2-website/` is
-enough) rather than a static preview.
+`index.html` cannot be previewed meaningfully without PHP behind it; opened as a
+plain file or from a static server, every sign-in fails. That is expected, not a
+bug. PHP is installed on the founder's Mac (Homebrew, PHP 8.5): run
+`php -S 127.0.0.1:8000` in `2-website/` and test against that. A simulated
+receiver is one POST (use `"mode":1` for a tank; wait 5 s between posts, the
+server throttles faster ones):
+
+```
+curl -X POST 'http://127.0.0.1:8000/api.php?a=ingest' \
+  -H 'X-Token: AQIDEMO000000001' -H 'Content-Type: application/json' \
+  -d '{"level":1840,"gap":1160,"depth":3000,"danger":2400,"mode":0,"alert":0,"rssi":-92,"snr":7.5}'
+```
+
+The reply carries the device key to activate on the site.
+
+`2-website/aquaiots.sqlite` created by local testing is throw-away data. It is
+git-ignored; delete it before uploading to hosting so the live site starts empty.
+
+Headless Chrome screenshots of a page scrolled to a hash come out blank or with
+the header floating mid-image. That is the capture, not the page: check
+`scrollY` and element rects through the DOM instead.
+
+Git: remote `origin` is https://github.com/jeetmagician/flood.git, branch `main`
+(public). GitHub holds the code only; the site is not hosted there. Commits carry
+the Co-Authored-By trailer.
 
 When changing the API and the front end together, keep the field names aligned:
 the firmware posts `level`, `gap`, `depth`, `danger`, `mode`, `alert`, `rssi`,
@@ -201,3 +282,20 @@ the firmware posts `level`, `gap`, `depth`, `danger`, `mode`, `alert`, `rssi`,
   before any commercial deployment, not for prototyping.
 - No SMS fallback. Worth adding (SIM800L on the receiver) for sites with no
   broadband, where an alert text beats no alert at all.
+- **The website cannot tell the sensor has died.** The receiver uploads its last
+  known level every 25 s even when no LoRa packet has arrived, so a dead sender
+  looks online and normal on the site (the siren still latches locally). Fix needs
+  a firmware change (send a stale flag, or skip the upload) and a matching
+  `api.php` change. Not done; firmware changes are suggestions for a human.
+- **`readReply()` in the cloud receiver uses Arduino `String`**
+  (`http.getString()`), against the fixed-`char`-buffers rule, on every upload.
+  Replace with a bounded read into a `char` buffer.
+- Until its first radio packet the receiver defaults to mode river, so a brand-new
+  tank node can briefly look like a river.
+- No optional "Site name" per client yet. The `clients.label` column exists and
+  nothing fills it; it would let the admin see which site a client ID is without
+  seeing readings.
+- Phone layout is unverified on a real phone; headless Chrome cannot go below
+  about 500 px wide.
+- The lockout (six wrong PINs), device post throttle, 90-day pruning, MySQL mode
+  and real cPanel hosting are untested.
