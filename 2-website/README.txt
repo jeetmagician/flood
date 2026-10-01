@@ -99,12 +99,10 @@ STEP 4  -  MAKE THE SITE YOURS
 
 Open index.html in Notepad and find these three things.
 
-1. YOUR PHOTO. Find the line that says
-
-       <!-- replace this block with: <img src="suranjeet.jpg" ...> -->
-
-   Upload a square photo to public_html as  suranjeet.jpg  and swap
-   the grey "SC" block for that one img line. About 400x400 is right.
+1. YOUR PHOTO. Already in place: your photo is embedded in index.html
+   (Founder section). To change it, replace the <img class="shot" ...>
+   line there with  <img class="shot" src="suranjeet.jpg" alt="">  and
+   upload a square photo of about 400x400 as suranjeet.jpg.
 
 2. YOUR SOCIAL LINKS. In the same founder block there are three
    placeholder addresses, in this order:
