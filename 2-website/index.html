@@ -456,6 +456,30 @@
   .exp-row input,.exp-row select{ width:auto; padding:10px 11px; font-size:14px; }
   .exp-row .btn{ padding:11px 20px; font-size:14px; }
 
+  /* ---------- records (5-minute log), shared by both portals ---------- */
+  .rec-wrap{ max-height:340px; overflow:auto; border:1px solid var(--line); border-radius:8px; margin-top:12px; }
+  .rec-wrap table{ margin:0; font-size:13px; min-width:460px; width:100%; }
+  .rec-wrap th{ position:sticky; top:0; padding:9px 12px; }
+  .rec-wrap td{ padding:6px 12px; border-bottom:1px solid var(--line); font-family:var(--mono); font-variant-numeric:tabular-nums; }
+  .rec-wrap tr.al td{ background:var(--bd-bg); color:var(--bad); }
+  .rec-wrap td.empty{ text-align:center; color:var(--fg-dim); padding:22px; font-family:var(--body); }
+  .alist{ list-style:none; margin:10px 0 0; padding:0; font-family:var(--mono); font-size:12.5px; }
+  .alist li{ color:var(--bad); padding:3px 0; }
+  .alist li.calm{ color:var(--ok); }
+  .nodedetail{ margin-top:22px; }
+  .dhead{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
+  .dhead h2{ font-size:22px; margin:2px 0 0; }
+  .dhead .pushr{ margin-left:auto; }
+  .figs{ display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); margin-bottom:16px; }
+  .fig{ border:1px solid var(--line); border-radius:10px; padding:11px 13px; background:var(--panel-2); }
+  .fig .lab{ margin-bottom:4px; }
+  .fig .v{ font-family:var(--dis); font-weight:700; font-size:22px; font-variant-numeric:tabular-nums; }
+  .fig .v.bad{ color:var(--bad); } .fig .v.warn{ color:var(--warn); }
+  .fig .t{ font-size:11.5px; color:var(--fg-dim); font-family:var(--mono); }
+  .board tr.sel td{ background:rgba(55,198,232,.07); }
+  .board tr.nrow{ cursor:pointer; }
+  .lvl{ font-family:var(--mono); font-variant-numeric:tabular-nums; white-space:nowrap; }
+
   /* ---------- admin view ---------- */
   #adminView .wrap{ padding-block:60px 90px; }
   .tag-admin{ font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--warn);
@@ -590,7 +614,7 @@
     </div>
     <div>
     <div class="gate" id="adGate">
-        <div class="gh"><span class="gi warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4.5 6v5.5c0 4.5 3 8 7.5 9.5 4.5-1.5 7.5-5 7.5-9.5V6L12 3Z"/><path d="m9 12 2.2 2.2L15.5 10"/></svg></span><div><h2 id="adH">Administrator</h2><p id="adP">Status board for every client. Water readings stay with the client who owns them.</p></div></div>
+        <div class="gh"><span class="gi warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4.5 6v5.5c0 4.5 3 8 7.5 9.5 4.5-1.5 7.5-5 7.5-9.5V6L12 3Z"/><path d="m9 12 2.2 2.2L15.5 10"/></svg></span><div><h2 id="adH">Administrator</h2><p id="adP">Every client and node, with live levels, the 5-minute record and alerts.</p></div></div>
       <form id="adForm" autocomplete="on">
         <div id="adNameRow" hidden>
           <label for="adNm">Your name</label>
@@ -896,6 +920,8 @@
         </div>
       </div>
 
+      <div class="card exportcard" id="cRec"></div>
+
       <div class="card exportcard" id="exportCard">
         <div class="lab">Download a report (PDF)</div>
         <div class="exp-row">
@@ -953,18 +979,35 @@
     <div class="board">
       <table>
         <thead><tr>
-          <th>Client</th><th>Nodes</th><th class="hide-s">Kind</th>
-          <th>Last report</th><th class="hide-s">Activated</th>
+          <th>Client</th><th>Node</th><th>Kind</th><th>Status</th>
+          <th>Level</th><th class="hide-s">% depth</th><th>Last report</th><th class="hide-s">Activated</th>
         </tr></thead>
         <tbody id="rows"></tbody>
       </table>
       <div class="none" id="none" hidden>No clients have activated a device yet.</div>
     </div>
 
-    <p class="note">This board shows whether a node is powered, connected and alarming. It does not
-       show water levels, history or any client's PIN, and there is no way to reach them from here —
-       the query that builds this page never touches the readings table. If a client asks you to
-       check their node, ask for the AQ- number they were given when they activated it.</p>
+    <section class="card nodedetail" id="adDetail" hidden>
+      <div class="dhead">
+        <div><div class="lab" id="dClient"></div><h2 id="dName"></h2></div>
+        <span id="dPill"></span>
+        <span class="pushr"><button class="linkbtn" id="dClose" type="button">Close</button></span>
+      </div>
+      <div class="figs" id="dFigs"></div>
+      <div class="chart-head">
+        <div class="lab" id="dChartLab">Level</div>
+        <div class="seg seg-sm" id="dRng" role="radiogroup" aria-label="Chart range">
+          <button type="button" class="on" data-r="live" role="radio">Live</button>
+          <button type="button" data-r="7d" role="radio">7 days</button>
+        </div>
+      </div>
+      <svg class="viz" id="dChart" viewBox="0 0 460 172" role="img" aria-label="Water level over time"></svg>
+      <div id="aRec" style="margin-top:18px"></div>
+    </section>
+
+    <p class="note">The administrator sees every client's nodes, levels, the 5-minute record and alerts, the
+       same as the client does. Client PINs are stored only as a hash and can never be read from here.
+       If a client asks you to check their node, ask for the AQ- number they were given when they activated it.</p>
   </div>
 
 </div></main></div>
@@ -1094,8 +1137,13 @@ var AqPdf = (function(){
   function header(p, sp, title, sub){
     var x = M;
     if (sp.logo){ var lh = 50, lw = lh * sp.logo.w / sp.logo.h; p.image(M, 28, lw, lh); x = M + lw + 16; }
-    p.text(x, 52, title, 19, 'F2', INK);
-    p.text(x, 70, clip(sub, 60), 12, 'F1', CY);
+    p.text(x, 52, title, 18, 'F2', INK);
+    p.text(x, 70, clip(sub, 30), 11, 'F1', CY);
+    // The company block, top right of every report: who made it and how to reach them.
+    var co = [['AQUAIOTS', 'F2', 9.5, INK], ['Founder: Suranjeet Choudhury', 'F1', 7.5, INK],
+              ['Customer care: +91 70024 51825', 'F1', 7.5, INK],
+              ['Lachit Nagar, Guwahati, Assam 781007', 'F1', 7.5, DIM]];
+    for (var q = 0; q < co.length; q++) p.text(PW - M - tw(co[q][0], co[q][2]), 36 + q * 12, co[q][0], co[q][2], co[q][1], co[q][3]);
     p.line(M, 90, PW - M, 90, 1.2, CY);
     return 104;
   }
@@ -1150,18 +1198,18 @@ var AqPdf = (function(){
     }
     var by = y + 146, bw = 80, gap = 7.0, bx = M;
     var avg = good.length ? sum / good.length : 0;
-    box(p, bx, by, bw, 'Readings', String(rows.length), 'one per 30 min'); bx += bw + gap;
+    box(p, bx, by, bw, 'Readings', String(rows.length), 'one per 5 min'); bx += bw + gap;
     box(p, bx, by, bw, 'Highest', good.length ? (mx / 1000).toFixed(2) + ' m' : '-', good.length ? Math.round(100 * mx / depth) + '% of depth' : ''); bx += bw + gap;
     box(p, bx, by, bw, 'Lowest', good.length ? (mn / 1000).toFixed(2) + ' m' : '-', good.length ? Math.round(100 * mn / depth) + '% of depth' : ''); bx += bw + gap;
     box(p, bx, by, bw, 'Average', good.length ? (avg / 1000).toFixed(2) + ' m' : '-', good.length ? Math.round(100 * avg / depth) + '% of depth' : ''); bx += bw + gap;
-    box(p, bx, by, bw, home ? 'At overflow' : 'At/over danger', String(above), above ? '~' + (above * 0.5) + ' h' : '', above ? BAD : INK); bx += bw + gap;
+    box(p, bx, by, bw, home ? 'At overflow' : 'At/over danger', String(above), above ? (above * 5 < 90 ? above * 5 + ' min' : (above / 12).toFixed(1) + ' h') : '', above ? BAD : INK); bx += bw + gap;
     box(p, bx, by, bw, 'Alerts', String(alerts), 'readings in alert', alerts ? BAD : INK);
 
     var top = by + 62;
     if (!rows.length){
       p.rect(M, top, PW - 2 * M, 70, [250,252,253], LINE);
       p.text(M + 14, top + 28, 'No readings were recorded for this period.', 12, 'F2', INK);
-      p.text(M + 14, top + 46, 'Readings are kept for the last ' + sp.keepDays + ' days, one every 30 minutes, so an older period may be empty.', 8.5, 'F1', DIM);
+      p.text(M + 14, top + 46, 'Readings are kept for the last ' + sp.keepDays + ' days, one every 5 minutes, so an older period may be empty.', 8.5, 'F1', DIM);
       footers(pages, sp, 'Water level in metres above the ' + (home ? 'tank floor.' : 'river bed.'));
       return assemble(pages, sp.logo, 'Aquaiots water level report - ' + sp.site + ' - ' + sp.periodLabel);
     }
@@ -1209,8 +1257,19 @@ var AqPdf = (function(){
       pg.text(cx[3], yy + 1, 'STATUS', 7, 'F2', INK);
       pg.text(cx[4], yy + 1, 'SIGNAL (dBm)', 7, 'F2', INK);
     }
-    var ty = top + 188;
-    p.text(M, ty - 12, 'RECORDED READINGS  (one every 30 minutes)', 7, 'F2', DIM);
+    // ----- alert events: each run of alert readings is one line
+    var ev = sp.episodes || [], ey = top + 186;
+    p.text(M, ey, 'ALERTS IN THIS PERIOD', 7, 'F2', DIM);
+    ey += 13;
+    if (!ev.length){ p.text(M + 4, ey, 'No alert was recorded in this period.', 8.5, 'F1', GOOD); ey += 11; }
+    for (i = 0; i < ev.length && i < 10; i++){
+      var e = ev[i];
+      p.text(M + 4, ey, sp.fmtTs(e.from) + '  to  ' + (e.to === e.from ? 'same reading' : sp.fmtTs(e.to)) + '   peak ' + (e.peak / 1000).toFixed(2) + ' m   (' + e.n + (e.n === 1 ? ' reading)' : ' readings)'), 8, 'F3', BAD);
+      ey += 11;
+    }
+    if (ev.length > 10){ p.text(M + 4, ey, '+ ' + (ev.length - 10) + ' more alert events', 8, 'F1', DIM); ey += 11; }
+    var ty = ey + 22;
+    p.text(M, ty - 12, 'RECORDED READINGS  (one every 5 minutes)', 7, 'F2', DIM);
     ty += 8; tableHead(p, ty); ty += 14;
     for (i = 0; i < rows.length; i++){
       if (ty > 790){
@@ -1228,29 +1287,27 @@ var AqPdf = (function(){
       p.text(cx[4], ty, String(rr.rssi), 7.5, 'F3', DIM);
       ty += 11;
     }
-    footers(pages, sp, 'Water level in metres above the ' + (home ? 'tank floor' : 'river bed') + '. Times are shown in ' + sp.tzLabel + '. One reading is recorded for every half hour.');
+    footers(pages, sp, 'Water level in metres above the ' + (home ? 'tank floor' : 'river bed') + '. Times are shown in ' + sp.tzLabel + '. One reading is recorded every 5 minutes.');
     return assemble(pages, sp.logo, 'Aquaiots water level report - ' + sp.site + ' - ' + sp.periodLabel);
   }
 
-  /* ---------- the administrator's report: STATUS ONLY, no water readings ---------- */
+  /* ---------- the administrator's fleet report: every client and node, with the latest level ---------- */
   function adminReport(sp){
     var pages = [], p = new Page(); pages.push(p);
     var y = header(p, sp, 'FLEET STATUS REPORT', 'Administrator');
     kv(p, M, y + 4, 'Generated', sp.generatedLabel + '  (' + sp.tzLabel + ')');
-    kv(p, M + 270, y + 4, 'Scope', 'Every client and node, current status');
+    kv(p, M + 270, y + 4, 'Scope', 'Every client and node, latest reading');
     var by = y + 40, bw = 95, gap = 10, bx = M, i;
     for (i = 0; i < sp.totals.length; i++){
       box(p, bx, by, bw, sp.totals[i].label, String(sp.totals[i].value), '', sp.totals[i].hot ? BAD : INK); bx += bw + gap;
     }
-    var ny = by + 64, note = wrap('This report shows whether each node is powered, connected and alarming. It does not contain water levels, readings or any client PIN: the administrator portal has no access to them, by design.', 105);
-    for (i = 0; i < note.length; i++) p.text(M, ny + i * 11, note[i], 8, 'F1', DIM);
-    var cx = [M, M + 62, M + 185, M + 262, M + 310, M + 378, M + 452];
+    var cx = [M, M + 62, M + 170, M + 247, M + 295, M + 365, M + 450];
     function head(pg, yy){
       pg.rect(M, yy - 9, PW - 2 * M, 14, [228,238,244], null);
-      var h = ['CLIENT', 'SITE / NODE', 'DEVICE KEY', 'TYPE', 'STATUS', 'LAST REPORT', 'ACTIVATED'];
+      var h = ['CLIENT', 'SITE / NODE', 'DEVICE KEY', 'TYPE', 'STATUS', 'LEVEL', 'LAST REPORT'];
       for (var k = 0; k < h.length; k++) pg.text(cx[k] + (k === 0 ? 4 : 0), yy + 1, h[k], 7, 'F2', INK);
     }
-    var ty = ny + note.length * 11 + 24; head(p, ty); ty += 14;
+    var ty = by + 80; head(p, ty); ty += 14;
     if (!sp.rows.length){ p.text(M + 4, ty, 'No clients have activated a device yet.', 8, 'F1', DIM); }
     for (i = 0; i < sp.rows.length; i++){
       if (ty > 790){
@@ -1261,15 +1318,15 @@ var AqPdf = (function(){
       var r = sp.rows[i];
       if (i % 2) p.rect(M, ty - 8, PW - 2 * M, 11, ZEBRA, null);
       p.text(cx[0] + 4, ty, r.client, 7.5, 'F3', CY);
-      p.text(cx[1], ty, clip(r.site, 21), 7.5, 'F3', INK);
+      p.text(cx[1], ty, clip(r.site, 18), 7.5, 'F3', INK);
       p.text(cx[2], ty, r.key, 7.5, 'F3', DIM);
       p.text(cx[3], ty, r.kind, 7.5, 'F3', DIM);
       p.text(cx[4], ty, r.status, 7.5, 'F2', r.status === 'OK' ? GOOD : (r.status === 'ALERT' || r.status === 'SENSOR LOST' ? BAD : DIM));
-      p.text(cx[5], ty, clip(r.last, 12), 7.5, 'F3', INK);
-      p.text(cx[6], ty, r.activated, 7.5, 'F3', DIM);
+      p.text(cx[5], ty, clip(r.level, 14), 7.5, 'F3', INK);
+      p.text(cx[6], ty, clip(r.last, 12), 7.5, 'F3', INK);
       ty += 11;
     }
-    footers(pages, sp, 'Status only. No water readings are included in the administrator report.');
+    footers(pages, sp, 'Latest reading of every node at the time of the report. PINs are never stored in readable form and are not included.');
     return assemble(pages, sp.logo, 'Aquaiots fleet status report - ' + sp.generatedLabel);
   }
 
@@ -1569,7 +1626,8 @@ function draw(){
   var node = nodes.filter(function(n){ return n.id === current; })[0];
   if (!node) return;
   paint(node);
-  if (!isMatch(node)){ histKey = ''; chart([], node); return; }
+  if (!isMatch(node)){ histKey = ''; chart([], node); cRecs.clear(); return; }
+  cRecs.load(node.id);
   // The live chart refreshes every few seconds, the 7-day one once a minute.
   var key = current + ':' + chartRange, t = Date.now();
   if (key === histKey && t - histAt < (chartRange === 'live' ? 4000 : 60000)) return;
@@ -1738,14 +1796,14 @@ function saveBytes(name, bytes){
   setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 1500);
 }
 
-/* ---- live chart: Live (last 30 min) or 7 days (one point per half hour) ---- */
+/* ---- live chart: Live (last 30 min) or 7 days (one point per 5 minutes) ---- */
 function markRange(){
   Array.prototype.forEach.call($('rngSeg').children, function(b){
     var on = b.getAttribute('data-r') === chartRange;
     b.className = on ? 'on' : ''; b.setAttribute('aria-checked', on ? 'true' : 'false');
   });
   $('chartLab').textContent = chartRange === 'live' ? 'Level \u00b7 last 30 min \u00b7 live'
-                                                   : 'Level \u00b7 last ' + keepDays + ' days \u00b7 every 30 min';
+                                                   : 'Level \u00b7 last ' + keepDays + ' days \u00b7 every 5 min';
 }
 $('rngSeg').addEventListener('click', function(e){
   var r = e.target.getAttribute && e.target.getAttribute('data-r');
@@ -1754,6 +1812,126 @@ $('rngSeg').addEventListener('click', function(e){
   if (nodes.length) draw();
 });
 markRange();
+
+/* ---- the 5-minute record, shared by the client and the administrator ----
+   Both portals read it through the same two calls (a=export), and the server decides
+   who may read which node. A run of alert readings is one alert event. */
+function alertEpisodes(rows){
+  var ev = [], cur = null;
+  rows.forEach(function(r){
+    if (!r.alert){ cur = null; return; }
+    if (cur && r.ts - cur.to <= 900){ cur.to = r.ts; cur.n++; if (r.level_mm > cur.peak) cur.peak = r.level_mm; }
+    else { cur = { from: r.ts, to: r.ts, peak: r.level_mm, n: 1 }; ev.push(cur); }
+  });
+  return ev;
+}
+function rowStatus(r, meta){
+  var danger = r.danger_mm > 0 ? r.danger_mm : meta.danger_mm;
+  if (r.alert) return meta.mode === 1 ? 'OVERFLOW' : 'DANGER';
+  if (r.level_mm < 0) return 'NO ECHO';
+  if (danger > 0 && r.level_mm >= danger * 0.85) return 'RISING';
+  return 'NORMAL';
+}
+function makeReport(j, rows, label, slug){
+  var bytes = AqPdf.clientReport({
+    logo: logoJpeg(), site: j.device.name, clientCode: j.client.code, devKey: j.device.dev_key,
+    mode: j.device.mode, depthMM: j.device.depth_mm, dangerMM: j.device.danger_mm, keepDays: j.keep_days,
+    periodLabel: label, generatedLabel: fmtTs(j.generated), tzLabel: tzLabel(), rows: rows, episodes: alertEpisodes(rows),
+    fmtTs: fmtTs, fmtTime: hhmm, fmtDay: fmtDay });
+  saveBytes('Aquaiots_' + fileSlug(j.device.name) + '_' + slug + '.pdf', bytes);
+}
+function dayStart(offset){ var d = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate() - offset).getTime() / 1000; }
+
+function Recs(root){
+  root.innerHTML =
+    '<div class="lab">Records &middot; one every 5 minutes &middot; last <span data-r="days">7</span> days</div>' +
+    '<div class="exp-row"><select data-r="day" aria-label="Day"></select>' +
+    '<div class="seg seg-sm" data-r="seg" role="radiogroup" aria-label="Which readings"><button type="button" class="on" data-f="all" role="radio">All readings</button>' +
+    '<button type="button" data-f="alert" role="radio">Alerts only</button></div>' +
+    '<button class="btn" data-r="pdf" type="button">Download PDF</button></div>' +
+    '<p class="hintline" data-r="sum"></p>' +
+    '<div class="lab" style="margin-top:12px">Alerts</div><ul class="alist" data-r="alerts"></ul>' +
+    '<div class="rec-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Level (m)</th><th>% depth</th><th>Status</th><th class="hide-s">Signal</th></tr></thead>' +
+    '<tbody data-r="body"></tbody></table></div><div class="msg" data-r="msg" role="status"></div>';
+  function q(k){ return root.querySelector('[data-r="' + k + '"]'); }
+  var st = { dev: null, at: 0, j: null, filter: 'all', busy: false }, sel = q('day');
+
+  function fillDays(keep){
+    var cur = sel.value, h = '<option value="all">All ' + keep + ' days</option>';
+    for (var i = 0; i < keep; i++){
+      var ts = dayStart(i), d = new Date(ts * 1000);
+      h += '<option value="' + ts + '">' + (i === 0 ? 'Today' : (i === 1 ? 'Yesterday' : fmtDay(ts))) + ' \u00b7 ' + pad2(d.getDate()) + ' ' + MON[d.getMonth()] + '</option>';
+    }
+    sel.innerHTML = h; if (cur) sel.value = cur; if (sel.selectedIndex < 0) sel.selectedIndex = 0;
+    q('days').textContent = keep;
+  }
+  function inDay(r){
+    if (sel.value === 'all') return true;
+    var f = +sel.value; return r.ts >= f && r.ts < f + 86400;
+  }
+  function render(){
+    var j = st.j; if (!j) return;
+    var meta = j.device, depth = Math.max(1, meta.depth_mm || 1);
+    var rows = j.rows.filter(inDay), ev = alertEpisodes(rows), al = rows.filter(function(r){ return r.alert; }), mx = -1;
+    rows.forEach(function(r){ if (r.level_mm > mx) mx = r.level_mm; });
+    q('sum').textContent = rows.length ? rows.length + ' readings \u00b7 ' + al.length + ' in alert \u00b7 highest ' + m2(mx) + ' m'
+                                       : 'Nothing was recorded for this day.';
+    var ul = q('alerts'); ul.innerHTML = '';
+    if (!ev.length){ var c = document.createElement('li'); c.className = 'calm'; c.textContent = 'No alert recorded' + (sel.value === 'all' ? ' in the last ' + j.keep_days + ' days.' : ' on this day.'); ul.appendChild(c); }
+    ev.slice().reverse().slice(0, 30).forEach(function(e){
+      var li = document.createElement('li');
+      li.textContent = fmtTs(e.from) + (e.to === e.from ? '' : '  to  ' + fmtTs(e.to)) + '   peak ' + m2(e.peak) + ' m  (' + e.n + (e.n === 1 ? ' reading)' : ' readings)');
+      ul.appendChild(li);
+    });
+    var shown = (st.filter === 'alert' ? al : rows).slice().reverse(), tb = q('body'); tb.innerHTML = '';
+    if (!shown.length){
+      var tr0 = document.createElement('tr'), td0 = document.createElement('td');
+      td0.colSpan = 6; td0.className = 'empty'; td0.textContent = st.filter === 'alert' ? 'No alert readings.' : 'No readings.';
+      tr0.appendChild(td0); tb.appendChild(tr0); return;
+    }
+    var frag = document.createDocumentFragment();
+    shown.forEach(function(r){
+      var d = new Date(r.ts * 1000), tr = document.createElement('tr'), stt = rowStatus(r, meta);
+      if (r.alert) tr.className = 'al';
+      var cells = [pad2(d.getDate()) + ' ' + MON[d.getMonth()] + ' ' + d.getFullYear(), pad2(d.getHours()) + ':' + pad2(d.getMinutes()),
+                   r.level_mm >= 0 ? m2(r.level_mm) : '-', r.level_mm >= 0 ? Math.round(100 * r.level_mm / Math.max(1, r.depth_mm || depth)) + '%' : '-',
+                   stt, String(r.rssi)];
+      cells.forEach(function(t, k){ var td = document.createElement('td'); td.textContent = t; if (k === 5) td.className = 'hide-s'; tr.appendChild(td); });
+      frag.appendChild(tr);
+    });
+    tb.appendChild(frag);
+  }
+  function load(dev, force){
+    var t = Date.now();
+    if (!force && dev === st.dev && t - st.at < 60000) return;
+    if (st.busy) return;
+    st.busy = true; var now = Math.floor(t / 1000);
+    get('a=export&device=' + dev + '&from=' + (now - 7 * 86400 - 3600) + '&to=' + (now + 300)).then(function(j){
+      st.busy = false; st.dev = dev; st.at = Date.now(); st.j = j;
+      if (!sel.options.length || +q('days').textContent !== j.keep_days) fillDays(j.keep_days);
+      render();
+    }).catch(function(){ st.busy = false; });
+  }
+  sel.addEventListener('change', render);
+  q('seg').addEventListener('click', function(e){
+    var f = e.target.getAttribute && e.target.getAttribute('data-f'); if (!f) return;
+    st.filter = f;
+    Array.prototype.forEach.call(q('seg').children, function(b){ b.className = b.getAttribute('data-f') === f ? 'on' : ''; });
+    render();
+  });
+  q('pdf').addEventListener('click', function(){
+    var msg = q('msg'), btn = q('pdf'); msg.className = 'msg bad'; msg.textContent = '';
+    if (!st.j){ msg.textContent = 'Nothing loaded yet.'; return; }
+    var rows = st.j.rows.filter(inDay);
+    if (!rows.length){ msg.textContent = 'No readings were recorded for that day.'; return; }
+    var all = sel.value === 'all', d = new Date((all ? dayStart(0) : +sel.value) * 1000);
+    var label = all ? 'Last ' + st.j.keep_days + ' days' : 'Day: ' + pad2(d.getDate()) + ' ' + MON[d.getMonth()] + ' ' + d.getFullYear();
+    makeReport(st.j, rows, label, all ? 'last-' + st.j.keep_days + '-days' : d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()));
+    msg.className = 'msg good'; msg.textContent = 'Downloaded a PDF with ' + rows.length + ' readings for ' + label + '.';
+  });
+  return { load: load, clear: function(){ st.dev = null; st.j = null; q('body').innerHTML = ''; q('alerts').innerHTML = ''; q('sum').textContent = ''; } };
+}
+var cRecs = Recs($('cRec')), aRecs = Recs($('aRec'));
 
 /* ---- the client's PDF report: pick a day, a month or a year ---- */
 var expKind = 'day';
@@ -1768,7 +1946,7 @@ function expInit(){
   var first = new Date(d.getTime() - keepDays * 86400000);
   $('expDay').min = first.getFullYear() + '-' + pad2(first.getMonth() + 1) + '-' + pad2(first.getDate());
   $('expDay').max = $('expDay').value;
-  $('expHint').textContent = 'A reading is recorded every 30 minutes and kept for ' + keepDays + ' days. A month or year report contains whatever is still stored.';
+  $('expHint').textContent = 'A reading is recorded every 5 minutes and kept for ' + keepDays + ' days. A month or year report contains whatever is still stored.';
   markExp();
 }
 function markExp(){
@@ -1819,12 +1997,7 @@ $('expGo').addEventListener('click', function(){
       msg.textContent = 'No readings were recorded for that period. Readings are kept for the last ' + j.keep_days + ' days.';
       return;
     }
-    var bytes = AqPdf.clientReport({
-      logo: logoJpeg(), site: j.device.name, clientCode: j.client.code, devKey: j.device.dev_key,
-      mode: j.device.mode, depthMM: j.device.depth_mm, dangerMM: j.device.danger_mm, keepDays: j.keep_days,
-      periodLabel: p.label, generatedLabel: fmtTs(j.generated), tzLabel: tzLabel(), rows: j.rows,
-      fmtTs: fmtTs, fmtTime: hhmm, fmtDay: fmtDay });
-    saveBytes('Aquaiots_' + fileSlug(j.device.name) + '_' + p.slug + '.pdf', bytes);
+    makeReport(j, j.rows, p.label, p.slug);
     msg.className = 'msg good';
     msg.textContent = 'Downloaded a PDF with ' + j.rows.length + ' readings for ' + p.label + '.';
   }).catch(function(err){ busy(btn, false); msg.textContent = err.message; });
@@ -1833,10 +2006,11 @@ $('expGo').addEventListener('click', function(){
 /* ---- administrator ----
    The only public trace of this is the #admin address. Whether anyone gets
    in is decided by the server's session, never by this page. */
-var setupMode = false, adTimer = null, adData = null, adFilter = 'all';
+var setupMode = false, adTimer = null, adData = null, adFilter = 'all', adSel = null, adRange = 'live', adHistAt = 0, adHistKey = '';
 
 function pill(state){
   if (state === 'alert')   return '<span class="pill p-bd">alert</span>';
+  if (state === 'rising')  return '<span class="pill p-off">rising</span>';
   if (state === 'nosensor') return '<span class="pill p-bd">sensor lost</span>';
   if (state === 'offline') return '<span class="pill p-off">offline</span>';
   if (state === 'waiting') return '<span class="pill p-off">waiting</span>';
@@ -1856,7 +2030,7 @@ $('adForm').addEventListener('submit', function(e){
 
 $('adOut').addEventListener('click', function(){
   post('admin_logout').then(function(){
-    clearInterval(adTimer); adTimer = null; adData = null;
+    clearInterval(adTimer); adTimer = null; adData = null; adSel = null; $('adDetail').hidden = true; aRecs.clear();
     location.hash = '#login';
   });
 });
@@ -1883,7 +2057,7 @@ function adminOpen(){
   return get('a=admin_me').then(function(j){
     if (!j.ok){ location.hash = '#login'; return; }
     adminLoad();
-    if (!adTimer) adTimer = setInterval(adminLoad, 15000);
+    if (!adTimer) adTimer = setInterval(adminLoad, 5000);
   }).catch(function(){ location.hash = '#login'; });
 }
 
@@ -1907,6 +2081,7 @@ function renderBoard(){
 
   var tb = $('rows'); tb.innerHTML = '';
   var shown = 0;
+  function cell(tr, cls, text){ var td = document.createElement('td'); if (cls) td.className = cls; td.textContent = text; tr.appendChild(td); return td; }
   adData.clients.forEach(function(c){
     if (adFilter !== 'all' && !c.devices.some(function(d){ return d.state === adFilter; })) return;
     if (q){
@@ -1914,48 +2089,125 @@ function renderBoard(){
       if (hay.toUpperCase().indexOf(q) < 0) return;
     }
     shown++;
-    var tr = document.createElement('tr');
-    var devs = c.devices.map(function(d){
-      return '<div class="devline">' + pill(d.state) +
-             '<span class="devname"></span><span class="devkey">' + d.dev_key + '</span></div>';
-    }).join('') || '<span class="devkey">none</span>';
-
-    var kinds = c.devices.map(function(d){ return d.mode === 1 ? 'tank' : 'river'; });
-    var freshest = null;
-    c.devices.forEach(function(d){
-      if (d.age !== null && (freshest === null || d.age < freshest)) freshest = d.age;
+    var list = c.devices.length ? c.devices : [null];
+    list.forEach(function(d, i){
+      var tr = document.createElement('tr');
+      // Names are typed by clients, so every cell is set as text, never as HTML.
+      cell(tr, 'cid', i === 0 ? c.code : '');
+      if (!d){
+        cell(tr, '', 'no node yet'); cell(tr, 'kind', '\u2014'); cell(tr, '', ''); cell(tr, 'lvl', '\u2014'); cell(tr, 'lvl hide-s', '\u2014');
+        cell(tr, 'when', '\u2014'); cell(tr, 'hide-s when', dateOf(c.created)); tb.appendChild(tr); return;
+      }
+      var nm = cell(tr, '', d.name); var ks = document.createElement('div'); ks.className = 'devkey'; ks.textContent = d.dev_key; nm.appendChild(ks);
+      cell(tr, 'kind', d.latest ? (d.mode === 1 ? 'tank' : 'river') : '\u2014');
+      var pc = tr.appendChild(document.createElement('td')); pc.innerHTML = pill(d.state);
+      var r = d.latest, depth = Math.max(1, d.depth_mm || 1);
+      cell(tr, 'lvl', r && r.level_mm >= 0 ? m2(r.level_mm) + ' m' : '\u2014');
+      cell(tr, 'lvl hide-s', r && r.level_mm >= 0 ? Math.round(100 * r.level_mm / depth) + '%' : '\u2014');
+      cell(tr, 'when', ago(d.age));
+      cell(tr, 'hide-s when', dateOf(c.created));
+      tr.className = 'nrow' + (adSel && adSel.id === d.id ? ' sel' : '');
+      tr.title = 'Open the full record of this node';
+      tr.addEventListener('click', function(){ adSel = { id: d.id, client: c.code }; adHistKey = ''; renderBoard(); drawDetail(true); });
+      tb.appendChild(tr);
     });
-
-    tr.innerHTML =
-      '<td><span class="cid">' + c.code + '</span></td>' +
-      '<td class="devs"></td>' +
-      '<td class="hide-s kind">' + (kinds.join(', ') || '—') + '</td>' +
-      '<td class="when">' + ago(freshest) + '</td>' +
-      '<td class="hide-s when">' + dateOf(c.created) + '</td>';
-    tr.querySelector('.devs').innerHTML = devs;
-    // Node names are typed by clients, so they are set as text, never as HTML.
-    var names = tr.querySelectorAll('.devname');
-    c.devices.forEach(function(d, i){ if (names[i]) names[i].textContent = d.name; });
-    tb.appendChild(tr);
   });
   var none = $('none');
   none.hidden = shown > 0;
   none.textContent = adData.clients.length ? 'Nothing matches that filter.' : 'No clients have activated a device yet.';
+  if (adSel) drawDetail(false);
 }
+
+/* ---- one node in full, as the client sees it ---- */
+function adminNode(){
+  if (!adSel || !adData) return null;
+  var hit = null;
+  adData.clients.forEach(function(c){ c.devices.forEach(function(d){ if (d.id === adSel.id){ hit = d; adSel.client = c.code; } }); });
+  return hit;
+}
+function figEl(label, value, sub, cls){
+  var f = document.createElement('div'); f.className = 'fig';
+  var l = document.createElement('div'); l.className = 'lab'; l.textContent = label;
+  var v = document.createElement('div'); v.className = 'v' + (cls ? ' ' + cls : ''); v.textContent = value;
+  f.appendChild(l); f.appendChild(v);
+  if (sub){ var t = document.createElement('div'); t.className = 't'; t.textContent = sub; f.appendChild(t); }
+  return f;
+}
+function drawDetail(scroll){
+  var d = adminNode(), box = $('adDetail');
+  if (!d){ box.hidden = true; return; }
+  var wasHidden = box.hidden; box.hidden = false;
+  var home = d.mode === 1, r = d.latest, depth = Math.max(1, d.depth_mm || 1), danger = d.danger_mm || 0;
+  var level = r ? r.level_mm : -1, lost = d.state === 'nosensor';
+  $('dClient').textContent = 'Client ' + adSel.client + ' \u00b7 ' + (r ? (home ? 'water tank' : 'river') : 'kind not known yet') + ' \u00b7 ' + d.dev_key;
+  $('dName').textContent = d.name;
+  $('dPill').innerHTML = pill(d.state);
+  var fg = $('dFigs'); fg.innerHTML = '';
+  var pct = level >= 0 ? Math.round(100 * level / depth) : null, rem = danger - level;
+  fg.appendChild(figEl(home ? 'Water stored' : 'Water level', level >= 0 ? m2(level) + ' m' : '\u2014',
+    level >= 0 ? level + ' mm of ' + depth + ' mm' + (lost ? ' \u00b7 last known' : '') : (d.state === 'waiting' ? 'no sensor data yet' : 'no echo'),
+    d.state === 'alert' ? 'bad' : (d.state === 'rising' ? 'warn' : '')));
+  fg.appendChild(figEl('% of full depth', pct === null ? '\u2014' : pct + '%'));
+  fg.appendChild(figEl(home ? 'Overflow mark' : 'Danger mark', danger ? m2(danger) + ' m' : '\u2014'));
+  fg.appendChild(figEl(home ? 'Until overflow' : 'Below danger by', level >= 0 && danger ? m2(Math.max(0, rem)) + ' m' : '\u2014',
+    level >= 0 && danger ? (rem <= 0 ? (home ? 'overflowing now' : 'past the danger mark') : Math.round(rem) + ' mm of headroom') : ''));
+  fg.appendChild(figEl('Full height', m2(depth) + ' m'));
+  fg.appendChild(figEl('Gap to sensor', r && r.gap_mm >= 0 ? m2(r.gap_mm) + ' m' : '\u2014'));
+  fg.appendChild(figEl('Radio', r ? r.rssi + ' dBm' : '\u2014', r ? Number(r.snr).toFixed(1) + ' dB' : ''));
+  fg.appendChild(figEl('Last packet', ago(d.age), lost ? 'sensor not heard' + (d.sensor_age === null ? '' : ' for ' + dur(d.sensor_age)) : (d.online ? 'receiver online' : 'receiver offline')));
+  $('dChartLab').textContent = adRange === 'live' ? 'Level \u00b7 last 30 min \u00b7 live' : 'Level \u00b7 last ' + (adData.keep_days || 7) + ' days \u00b7 every 5 min';
+  var key = adSel.id + ':' + adRange, t = Date.now();
+  if (key !== adHistKey || t - adHistAt > (adRange === 'live' ? 4000 : 60000)){
+    adHistKey = key; adHistAt = t;
+    get('a=history&device=' + adSel.id + '&range=' + adRange).then(function(h){ miniChart($('dChart'), h.rows, depth, danger, adRange === '7d' ? fmtShort : hhmm); })
+      .catch(function(){ adHistAt = 0; });
+  }
+  aRecs.load(adSel.id);
+  if (scroll || wasHidden) box.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+/* The same chart as the client's, drawn into any svg with a 460 x 172 box. */
+function miniChart(svg, rows, depth, danger, tf){
+  var good = (rows || []).filter(function(r){ return r.level_mm >= 0; }), pts = '', lx = 44, ly = 134, i;
+  for (i = 0; i < good.length; i++){
+    lx = 44 + 408 * (good.length < 2 ? 1 : i / (good.length - 1));
+    ly = 134 - 120 * Math.min(1, good[i].level_mm / depth);
+    pts += lx.toFixed(1) + ',' + ly.toFixed(1) + ' ';
+  }
+  var last = good.length ? good[good.length - 1] : null, col = last && last.alert ? 'var(--bad)' : 'var(--cy)';
+  var dy = 134 - 120 * Math.min(1, danger / depth), txt = 'font-family="IBM Plex Mono, monospace" font-size="9.5" style="fill:var(--fg-dim)"';
+  var h = '<line x1="44" y1="14" x2="452" y2="14" style="stroke:var(--grid)"/><line x1="44" y1="74" x2="452" y2="74" style="stroke:var(--grid)"/>' +
+          '<line x1="44" y1="134" x2="452" y2="134" style="stroke:var(--line)"/>' +
+          (danger > 0 ? '<line x1="44" y1="' + dy.toFixed(1) + '" x2="452" y2="' + dy.toFixed(1) + '" stroke="#F0705A" stroke-width="1" stroke-dasharray="6 4"/>' : '') +
+          '<text x="40" y="18" text-anchor="end" ' + txt + '>' + m2(depth) + '</text><text x="40" y="137" text-anchor="end" ' + txt + '>0</text>';
+  if (good.length){
+    h += '<g style="color:' + col + '"><polyline fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" points="' + pts + '"/>' +
+         '<circle cx="' + lx.toFixed(1) + '" cy="' + ly.toFixed(1) + '" r="3.8" fill="currentColor"/></g>';
+    if (good.length > 1) h += '<text x="44" y="156" text-anchor="start" ' + txt + '>' + tf(good[0].ts) + '</text><text x="452" y="156" text-anchor="end" ' + txt + '>' + tf(last.ts) + '</text>';
+  } else h += '<text x="248" y="80" text-anchor="middle" ' + txt + '>no readings in this range</text>';
+  svg.innerHTML = h;
+}
+$('dRng').addEventListener('click', function(e){
+  var r = e.target.getAttribute && e.target.getAttribute('data-r');
+  if (r !== 'live' && r !== '7d') return;
+  adRange = r; adHistKey = '';
+  Array.prototype.forEach.call($('dRng').children, function(b){ b.className = b.getAttribute('data-r') === r ? 'on' : ''; });
+  drawDetail(false);
+});
+$('dClose').addEventListener('click', function(){ adSel = null; $('adDetail').hidden = true; renderBoard(); });
 $('adSearch').addEventListener('input', renderBoard);
 $('adPdf').addEventListener('click', function(){
   if (!adData) return;
   var label = { alert:'ALERT', offline:'OFFLINE', waiting:'WAITING', nosensor:'SENSOR LOST', normal:'OK' }, rows = [];
   adData.clients.forEach(function(c){
     var made = fmtTs(c.created).slice(0, 11);
-    if (!c.devices.length) rows.push({ client:c.code, site:'-', key:'-', kind:'-', status:'NO NODE', last:'-', activated:made });
+    if (!c.devices.length) rows.push({ client:c.code, site:'-', key:'-', kind:'-', status:'NO NODE', level:'-', last:'-', activated:made });
     c.devices.forEach(function(d){
-      rows.push({ client:c.code, site:d.name, key:d.dev_key, kind:d.mode === 1 ? 'tank' : 'river',
-                  status:label[d.state] || 'OK', last:ago(d.age), activated:made });
+      var lv = d.latest && d.latest.level_mm >= 0 ? m2(d.latest.level_mm) + ' m  ' + Math.round(100 * d.latest.level_mm / Math.max(1, d.depth_mm || 1)) + '%' : '-';
+      rows.push({ client:c.code, site:d.name, key:d.dev_key, kind:d.latest ? (d.mode === 1 ? 'tank' : 'river') : '-',
+                  status:label[d.state] || (d.state === 'rising' ? 'RISING' : 'OK'), level:lv, last:ago(d.age), activated:made });
     });
   });
   var t = adData.totals, lost = t.lost || 0;
-  // Status only. adData has no water readings, so there is nothing of the kind to print.
   var bytes = AqPdf.adminReport({ logo: logoJpeg(), generatedLabel: fmtTs(adData.now), tzLabel: tzLabel(), rows: rows,
     totals: [ { label:'Clients', value:t.clients }, { label:'Nodes', value:t.devices }, { label:'Reporting now', value:t.online },
               { label:'In alert', value:t.alerts, hot:t.alerts > 0 }, { label:'Sensor lost', value:lost, hot:lost > 0 } ] });

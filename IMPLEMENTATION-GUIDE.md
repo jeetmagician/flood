@@ -148,7 +148,7 @@ When this works, the hardware is good. Only then go on. Bench-test procedure det
 
 Settings at the top of `api.php` you may want to change: `KEEP_DAYS` (readings kept, 90),
 `ONLINE_SEC` (180 — no upload this long means OFFLINE), `SENSOR_LOST_SEC` (30 — see section
-8), `KEEP_DAYS` (7 — how long the half-hour history is kept), `MAX_TRIES` / `LOCK_SEC` (six wrong PINs lock an account for 15 minutes).
+8), `KEEP_DAYS` (7 — how long the 5-minute history is kept), `MAX_TRIES` / `LOCK_SEC` (six wrong PINs lock an account for 15 minutes).
 If your host does not allow SQLite, switch to MySQL by editing the five `MYSQL_` lines at the
 top; the tables are created automatically either way.
 
@@ -290,17 +290,22 @@ antenna and range. The siren on the receiver does not depend on any of this.
 
 - **Live:** the dashboard shows `LIVE · updated N s ago` and refreshes every 2 seconds. The
   chart has a **Live** view (last 30 minutes) and a **7 days** view.
-- **History:** one reading is recorded for every half hour (on the hour and at :30) and kept
-  for 7 days (`KEEP_DAYS` in `api.php`). To keep a month or a year, raise that number — a year
-  is only about 17,500 rows per device.
+- **History:** one reading is recorded every 5 minutes and kept for 7 days (`KEEP_DAYS` in
+  `api.php`), about 2,016 rows per device. A **Records** card on the client dashboard lists
+  them by date and time with the level, and shows every alert of the 7 days. To keep a month
+  or a year, raise `KEEP_DAYS` — a year is about 105,000 rows per device.
 - **PDF report (client):** on the dashboard, *Download a report (PDF)*. Choose **Day**,
-  **Month** or **Year** and press **Download PDF**. It has the site name, client ID, device
-  key, the period, a summary, a chart and the table of readings. If nothing was recorded for
+  **Month** or **Year** and press **Download PDF**. It has the Aquaiots logo, the founder's name and contact
+  details at the top, then the site name, client ID, device
+  key, the period, a summary, a chart, the alert events and the table of readings. If nothing was recorded for
   that period, it tells you instead of downloading an empty file.
-- **PDF report (administrator):** *Download status PDF* on the admin board lists every client
-  and node and whether it is OK, in alert, offline, sensor lost or waiting. It deliberately
-  contains **no water readings**, so you can promise customers in writing that nobody at
-  Aquaiots can see their water data.
+- **Administrator:** the board lists every client ID and node with its kind (tank or river),
+  status, level and % of depth. Click a node to open the same detail the client sees: level,
+  mark, headroom, radio, chart (live and 7 days), the 5-minute Records with alerts, and the
+  PDF download. *Download status PDF* is the fleet list with the latest level of every node.
+  Because the administrator can read water data, do **not** promise customers in writing that
+  nobody at Aquaiots can see it (this changed on 2026-10-06 at the founder's request). PINs
+  stay hashed and unreadable.
 - **After a site upgrade**, flash the current `node_receiver_8266_cloud` too, or the site stays
   at the old 25-second delay. Desk-test the new receiver before trusting it: Serial Monitor
   steady on `cloud 200`, the page at `192.168.4.1` still responsive, and the siren still

@@ -66,7 +66,7 @@ The tables are created automatically either way.
 
 Other settings at the top of api.php you may want to change:
 
-    const KEEP_DAYS   = 7;     // half-hour history kept this many days (365 for yearly reports)
+    const KEEP_DAYS   = 7;     // 5-minute history kept this many days (365 for yearly reports)
     const MIN_GAP_SEC = 1;     // a device may not post faster than this
     const ONLINE_SEC  = 180;   // no packet for this long = offline
     const SENSOR_LOST_SEC = 30; // receiver online but sensor unheard this long = sensor lost
@@ -194,17 +194,20 @@ LIVE. The receiver now uploads every 2 seconds and the dashboard polls
 every 2 seconds, so a change shows within a few seconds. The delay IS the
 receiver's UPLOAD_SEC. Flash the current node_receiver_8266_cloud to get it.
 
-HISTORY. One reading per device per half hour (at :00 and :30) is kept
-for KEEP_DAYS days (7). Month and Year reports can only contain what is
-still stored, so raise KEEP_DAYS if you want longer reports; a year costs
-about 17,500 rows per device. The live chart uses a separate 2-hour
+HISTORY. One reading per device every 5 minutes is kept for KEEP_DAYS days
+(7), about 2,016 rows per device. An alert that happens inside a 5-minute
+slot always marks that slot. Month and Year reports can only contain what
+is still stored, so raise KEEP_DAYS if you want longer reports; a year
+costs about 105,000 rows per device. The live chart uses a separate 2-hour
 buffer that trims itself.
 
 PDF. The client's dashboard has "Download a report (PDF)": choose Day,
 Month or Year and press Download. The PDF is built in the browser and
 carries the site name, client ID, device key, the period, a summary, a
-chart and a table. The administrator's board has "Download status PDF":
-status only, never water readings.
+chart, the alert events and a table, under a header with the logo, the
+founder's name and the contact details. The administrator opens any node on
+the board and gets the same records and PDF; "Download status PDF" is the
+fleet list with the latest level of every node.
 
 Upgrading an existing site: upload the new index.html and api.php. The
 database upgrades itself on the first request; nothing to do by hand.

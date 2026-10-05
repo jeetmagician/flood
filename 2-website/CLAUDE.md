@@ -150,17 +150,14 @@ and also works as a login handle.
 **Wrong key and wrong PIN return an identical message.** The login form must not
 reveal which keys exist. Six failures lock the account for 15 minutes.
 
-**The admin portal cannot see water readings.** `admin_clients` reads only the
-`clients` and `devices` tables: the alert flag, the time of the last upload and the
-sensor flag all come from columns on the device row (`lv_alert`, `last_seen`,
-`sensor_ok`). It never reads `readings` or `history` and never selects a level; this
-was tested by renaming both tables away and confirming the admin board still works.
-This is a promise that can be made to customers in writing; it is one line away from
-being broken, so do not "improve" that query. Client PINs are hashed and never
-retrievable. The admin's PDF (`Download status PDF`) is status only for the same
-reason. **Pending decision (founder, 2026-10-05):** the founder asked for the
-recorded data to be exportable "for both client and admin portal". Giving the admin
-the readings would end this promise, so it was NOT built; ask before doing it.
+**The admin portal CAN see water readings (decision, founder, 2026-10-06).** It used to be
+status-only, a promise that could be made to customers in writing; the founder chose to end it so
+the administrator sees every client's nodes as the client does. So: do not promise customers that
+Aquaiots staff cannot see their data. `admin_clients` returns each node's latest reading, taken from
+the `devices.lv_*` columns (it still never reads `readings`/`history`, so the 5 s admin poll stays
+cheap). The 5-minute record is read per node through `a=history` and `a=export`, which accept a
+client session (own nodes only) or an admin session (any node) via `device_for_reader()`. Client PINs
+are still hashed and never retrievable, and the start screen still reveals nothing about which keys exist.
 
 **`admin_setup` works exactly once**, while the admins table is empty, then
 refuses forever. There is no password reset and no second admin. On the site it
@@ -228,8 +225,15 @@ step and no server load. A report holds the site (node) name, client ID, device 
 type, full depth, danger/overflow mark, period, generated time with time zone, summary
 boxes (readings, highest, lowest, average, time at/over the mark, alerts), a chart with
 the danger line, and a paginated table (date and time, level, % of depth, status,
-signal). Times are the viewer's local time and say so. The admin's PDF is
-`AqPdf.adminReport`: totals plus one row per node, STATUS ONLY.
+signal), preceded by an alert-events section. Every PDF has a header with the logo, the founder's
+name, customer care number and address. Times are the viewer's local time and say so.
+
+**Records card (both portals, `Recs()` in `index.html`).** The 5-minute log for the last 7 days: a day
+selector (All 7 days, or one day), All readings | Alerts only, date / time / level / % depth / status /
+signal, the alert events (a run of alert readings is one event) and a Download PDF button. The client
+gets it under the chart; the administrator gets it by clicking a node on the board, which opens a detail
+panel (figures, Live | 7 days chart, Records, PDF). The board polls every 5 s. The admin's PDF is
+`AqPdf.adminReport`: totals plus one row per node with its latest level.
 
 **Wrong key, wrong PIN and unknown key still give one message.** Nothing on the
 start screen may reveal which keys or client IDs exist.
@@ -434,10 +438,11 @@ automatically on first request (`PRAGMA table_info` / `SHOW COLUMNS`, then
 2. `readings`: the live buffer, one row per upload, trimmed to `LIVE_KEEP_SEC` (2 h).
    It feeds only the "Live" chart (last `LIVE_CHART_SEC` = 30 min, thinned to ~150
    points by the server).
-3. `history`: ONE row per device per half hour (`slot = floor(ts/1800)`, so :00 and :30;
+3. `history`: ONE row per device per 5 minutes (`slot = floor(ts/300)`, `HISTORY_SLOT_SEC`;
    `UNIQUE(device_id, slot)` + `INSERT OR IGNORE`/`INSERT IGNORE`), kept `KEEP_DAYS`
-   (7). It feeds the "7 days" chart and the PDF reports. A year is only ~17,500 rows
-   per device, so set `KEEP_DAYS = 365` if month/year reports should mean anything.
+   (7), about 2,016 rows per device. It feeds the "7 days" chart, the Records card and the PDF
+   reports. An alert upload inside a slot sets that slot's `alert` and keeps its highest level, so
+   an alert is never lost to a calm first reading. A year is ~105,000 rows per device, so set `KEEP_DAYS = 365` if month/year reports should mean anything.
    `MIN_GAP_SEC` is now 1 so a 2 s receiver is never throttled. Pruning runs on about
    1 in 30 uploads. Nothing is stored while the sensor is lost, so history has a gap
    rather than a fake flat line.
@@ -513,6 +518,16 @@ containing no readings, tank/river filtering, theme toggle persistence.
 lockout, the 5 s post throttle, 90-day pruning, MySQL, real cPanel hosting, the phone
 layout on a real phone, and the tank view, admin board and story page in light mode.
 
+15. **Admin sees readings; 5-minute records; PDF header (2026-10-06).** Founder asked that the
+    administrator see every registered client ID with River/Tank and the same detail as the client,
+    that data be recorded every 5 minutes with date, time, level and alerts for 7 days, downloadable
+    as a PDF with logo, founder name and contact details on top, in both portals. Done as described
+    above (history slot 300 s, alert upgrade in ingest, `device_for_reader`, admin node rows and detail
+    panel, shared `Recs()`, PDF header and alert events). Tested on a scratch copy against the real PHP
+    backend and a real browser: admin and client reads, a client refused another client's node,
+    unauthenticated read refused, 2,000 seeded rows, alert filter, per-day filter, both PDFs downloaded
+    and rendered, no page errors. Not tested: a real phone, light theme, MySQL.
+
 **Never recorded in any file:** the admin's email and password, and any client PIN.
 
 ---
@@ -535,12 +550,10 @@ layout on a real phone, and the tank view, admin board and story page in light m
 - **Hosting load grows with devices:** one device is about 0.5 requests/s. A few dozen
   are fine on shared hosting; for hundreds raise `UPLOAD_SEC` or move to a VPS.
 - **Retention is 7 days as requested**, so Month and Year reports only ever contain the
-  last 7 days. Raise `KEEP_DAYS` (365 costs ~17,500 rows per device) if real monthly or
+  last 7 days. Raise `KEEP_DAYS` (365 costs ~105,000 rows per device) if real monthly or
   yearly reports are wanted.
-- **Admin portal still cannot see or export water readings** (see Security decisions).
-  The founder asked for it; awaiting an explicit decision to end that promise.
-- History records the FIRST fresh reading of each half hour, so a flood peak between two
-  samples is not in the PDF. A per-slot maximum column would fix it if wanted.
+- History records the FIRST fresh reading of each 5-minute slot (raised to the highest level
+  if an alert arrives inside it), so a calm-level peak between two samples is not recorded.
 - A receiver flashed with the *old* sketch still works but cannot report `age`, so a
   dead sensor on it still looks live. Reflash the cloud receiver to get SENSOR LOST.
 - A WiFi-setup box on the receiver's own page (name, password, Connect) so the WiFi can

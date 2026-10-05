@@ -9,7 +9,7 @@
                          over LoRa (-1 = never). Without it the reading is taken
                          as fresh, so older firmware keeps working.
    CLIENT PORTAL
-     GET   export        &device=ID&from=TS&to=TS     half-hour history for a PDF report
+     GET   export        &device=ID&from=TS&to=TS     5-minute history for a PDF report or the records table
      POST  claim         {key, pin}          activate a device, makes a client
      POST  login         {id, pin}           id = device key OR client id
      POST  logout
@@ -23,7 +23,8 @@
      POST  admin_login   {email,password}
      POST  admin_logout
      GET   admin_me
-     GET   admin_clients                     every client, STATUS ONLY
+     GET   admin_clients                     every client and node with its latest reading
+                                             (history and export also work for an admin session, any node)
    ===================================================================== */
 
 declare(strict_types=1);
@@ -36,9 +37,9 @@ const MYSQL_USER  = 'aquaiots';
 const MYSQL_PASS  = 'change-me';
 
 const SQLITE_FILE = __DIR__ . '/aquaiots.sqlite';
-const KEEP_DAYS   = 7;       // half-hour history kept this many days. A year of it is only
+const KEEP_DAYS   = 7;       // 5-minute history kept this many days (2,016 rows per node). A year of it is
                              // ~17,500 rows per device, so raise to 365 for month/year reports.
-const HISTORY_SLOT_SEC = 1800; // one history row per device per half hour (:00 and :30)
+const HISTORY_SLOT_SEC = 300;  // one history row per device per 5 minutes (2,016 rows per node per 7 days)
 const LIVE_KEEP_SEC    = 7200; // the live buffer behind the live chart is trimmed to this
 const LIVE_CHART_SEC   = 1800; // the live chart shows this much
 const MIN_GAP_SEC = 1;       // a device may not post faster than this
@@ -142,8 +143,8 @@ function db(): PDO {
     catch (PDOException $e) { /* already there */ }
 
     // readings = the LIVE buffer (every upload, trimmed to LIVE_KEEP_SEC).
-    // history  = ONE row per device per half hour, kept KEEP_DAYS, for reports.
-    // slot = floor(ts / 1800); UNIQUE(device_id, slot) makes the insert idempotent.
+    // history  = ONE row per device per 5 minutes, kept KEEP_DAYS, for reports.
+    // slot = floor(ts / 300); UNIQUE(device_id, slot) makes the insert idempotent.
     $pdo->exec("CREATE TABLE IF NOT EXISTS history (
         id $auto,
         device_id  INT,
@@ -256,6 +257,27 @@ function admin_or_401(PDO $pdo): array {
     return $a;
 }
 
+/* A client may read only their own devices. The administrator may read any device
+   (the founder decided on 2026-10-06 that the admin sees readings too). Returns the
+   device row plus the owner's client code. */
+function device_for_reader(PDO $pdo, int $dev): array {
+    session_start_safe();
+    if (!empty($_SESSION['aid'])) {
+        admin_or_401($pdo);
+        $s = $pdo->prepare('SELECT d.name, d.dev_key, d.mode, d.depth_mm, d.danger_mm, c.code AS client_code
+                            FROM devices d LEFT JOIN clients c ON c.id = d.client_id WHERE d.id = ?');
+        $s->execute([$dev]);
+    } else {
+        $c = client_or_401($pdo);
+        $s = $pdo->prepare('SELECT d.name, d.dev_key, d.mode, d.depth_mm, d.danger_mm, ? AS client_code
+                            FROM devices d WHERE d.id = ? AND d.client_id = ?');
+        $s->execute([$c['code'], $dev, $c['id']]);
+    }
+    $d = $s->fetch();
+    if (!$d) fail('Not your device.', 403);
+    return $d;
+}
+
 function state_of(?array $r, int $now): string {
     if (!$r || $r['ts'] === null)                 return 'waiting';
     if ($now - (int)$r['ts'] > ONLINE_SEC)        return 'offline';
@@ -339,14 +361,22 @@ case 'ingest': {
         ->execute([$now, $mode, $depth, $danger, $now - $age,
                    $level, $gap, $alert, $rssi, $snr, $now, $dev['id']]);
 
-    // 3. The permanent record: the first fresh reading of each half hour. The slot
-    //    key makes a second insert in the same half hour a silent no-op.
+    // 3. The permanent record: the first fresh reading of each 5 minutes. The slot
+    //    key makes a second insert in the same 5 minutes a silent no-op.
     $ign = USE_MYSQL ? 'INSERT IGNORE' : 'INSERT OR IGNORE';
     $pdo->prepare("$ign INTO history
         (device_id, slot, ts, level_mm, gap_mm, depth_mm, danger_mm, mode, alert, rssi, snr)
         VALUES (?,?,?,?,?,?,?,?,?,?,?)")
         ->execute([$dev['id'], intdiv($now, HISTORY_SLOT_SEC), $now, $level, $gap, $depth, $danger,
                    $mode, $alert, $rssi, $snr]);
+
+    // An alert that starts mid-slot must not be lost because the slot's first reading was
+    // calm: mark the slot as alert, and keep the highest level seen in it.
+    if ($alert) {
+        $pdo->prepare('UPDATE history SET alert=1, level_mm=CASE WHEN level_mm < ? THEN ? ELSE level_mm END
+                       WHERE device_id=? AND slot=?')
+            ->execute([$level, $level, $dev['id'], intdiv($now, HISTORY_SLOT_SEC)]);
+    }
 
     if (random_int(1, 30) === 1) {
         $pdo->prepare('DELETE FROM readings WHERE ts < ?')->execute([$now - LIVE_KEEP_SEC]);
@@ -524,18 +554,21 @@ case 'nodes': {
 }
 
 case 'history': {
-    $c   = client_or_401($pdo);
     $dev = (int)($_GET['device'] ?? 0);
-
-    $s = $pdo->prepare('SELECT id FROM devices WHERE id = ? AND client_id = ?');
-    $s->execute([$dev, $c['id']]);
-    if (!$s->fetch()) fail('Not your device.', 403);
+    device_for_reader($pdo, $dev);
 
     if (($_GET['range'] ?? 'live') === '7d') {
         $range = '7d';
         $s = $pdo->prepare('SELECT ts, level_mm, alert FROM history WHERE device_id = ? AND ts >= ? ORDER BY ts');
         $s->execute([$dev, $now - KEEP_DAYS * 86400]);
         $rows = $s->fetchAll();
+        // 2,016 points is more than a chart can draw: keep about 300, but never drop an alert.
+        $step = max(1, (int)ceil(count($rows) / 300));
+        if ($step > 1) {
+            $keep = [];
+            foreach ($rows as $k => $r) if ($k % $step === 0 || $k === count($rows) - 1 || (int)$r['alert'] === 1) $keep[] = $r;
+            $rows = $keep;
+        }
     } else {
         $range = 'live';
         $s = $pdo->prepare('SELECT ts, level_mm, alert FROM readings WHERE device_id = ? AND ts >= ? ORDER BY ts');
@@ -552,24 +585,20 @@ case 'history': {
     out(['ok' => true, 'range' => $range, 'keep_days' => KEEP_DAYS, 'rows' => $rows]);
 }
 
-/* One device's half-hour history for a PDF report. The browser builds the PDF. */
+/* One device's 5-minute history for a PDF report or the records table. The browser builds the PDF. */
 case 'export': {
-    $c    = client_or_401($pdo);
     $dev  = (int)($_GET['device'] ?? 0);
     $from = (int)($_GET['from'] ?? 0);
     $to   = (int)($_GET['to'] ?? 0);
     if ($from <= 0 || $to <= $from || $to - $from > 400 * 86400) fail('Choose a valid period.');
 
-    $s = $pdo->prepare('SELECT name, dev_key, mode, depth_mm, danger_mm FROM devices WHERE id = ? AND client_id = ?');
-    $s->execute([$dev, $c['id']]);
-    $d = $s->fetch();
-    if (!$d) fail('Not your device.', 403);
+    $d = device_for_reader($pdo, $dev);
 
     $s = $pdo->prepare('SELECT ts, level_mm, gap_mm, depth_mm, danger_mm, alert, rssi, snr FROM history
                         WHERE device_id = ? AND ts >= ? AND ts < ? ORDER BY ts LIMIT 20000');
     $s->execute([$dev, $from, $to]);
 
-    out(['ok' => true, 'client' => ['code' => $c['code']],
+    out(['ok' => true, 'client' => ['code' => $d['client_code']],
          'device' => ['name' => $d['name'], 'dev_key' => $d['dev_key'], 'mode' => (int)$d['mode'],
                       'depth_mm' => (int)$d['depth_mm'], 'danger_mm' => (int)$d['danger_mm']],
          'from' => $from, 'to' => $to, 'generated' => $now, 'keep_days' => KEEP_DAYS,
@@ -636,14 +665,14 @@ case 'admin_me': {
 case 'admin_clients': {
     admin_or_401($pdo);
 
-    // STATUS ONLY. Neither this query nor the one below reads the readings or
-    // history tables, and neither selects a level, so a water reading cannot
-    // reach the admin portal even by accident. The alert flag and the time of the
-    // latest upload come from the device row.
+    // The administrator sees what the client sees (decision of 2026-10-06). The current
+    // level still comes from the device row, so this poll never touches the readings table;
+    // the 5-minute record is read per node through 'history' and 'export'.
     $rows = $pdo->query('SELECT id, code, label, created, last_login FROM clients ORDER BY id DESC')
                 ->fetchAll();
 
-    $dq = $pdo->prepare('SELECT id, dev_key, name, mode, last_seen, sensor_ok, lv_alert, lv_ts FROM devices
+    $dq = $pdo->prepare('SELECT id, dev_key, name, mode, depth_mm, danger_mm, last_seen, sensor_ts, sensor_ok,
+                                lv_level, lv_gap, lv_alert, lv_rssi, lv_snr, lv_ts FROM devices
                          WHERE client_id = ? ORDER BY id');
 
     $onlineTotal = 0; $alertTotal = 0; $devTotal = 0; $lostTotal = 0;
@@ -659,7 +688,12 @@ case 'admin_clients': {
             $d['state'] = $has
                 ? (!$d['online'] ? 'offline' : ($lost ? 'nosensor' : ((int)$d['lv_alert'] === 1 ? 'alert' : 'normal')))
                 : 'waiting';
-            unset($d['last_seen'], $d['sensor_ok'], $d['lv_alert'], $d['lv_ts']);
+            if ($d['state'] === 'normal' && (int)$d['danger_mm'] > 0 && (int)$d['lv_level'] >= (int)$d['danger_mm'] * 0.85) $d['state'] = 'rising';
+            $d['sensor_age'] = $d['sensor_ts'] ? $now - (int)$d['sensor_ts'] : null;
+            $d['latest'] = $has ? ['ts' => (int)$d['lv_ts'], 'level_mm' => (int)$d['lv_level'], 'gap_mm' => (int)$d['lv_gap'],
+                                   'alert' => (int)$d['lv_alert'], 'rssi' => (int)$d['lv_rssi'], 'snr' => (float)$d['lv_snr']] : null;
+            unset($d['last_seen'], $d['sensor_ts'], $d['sensor_ok'], $d['lv_level'], $d['lv_gap'], $d['lv_alert'],
+                  $d['lv_rssi'], $d['lv_snr'], $d['lv_ts']);
             if ($d['state'] === 'nosensor') $lostTotal++;
             $devTotal++;
             if ($d['online']) $onlineTotal++;
@@ -670,7 +704,7 @@ case 'admin_clients': {
     }
     unset($c);
 
-    out(['ok' => true, 'clients' => $rows, 'now' => $now,
+    out(['ok' => true, 'clients' => $rows, 'now' => $now, 'keep_days' => KEEP_DAYS,
          'totals' => ['clients' => count($rows), 'devices' => $devTotal,
                       'online'  => $onlineTotal, 'alerts' => $alertTotal, 'lost' => $lostTotal]]);
 }
