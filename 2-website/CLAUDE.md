@@ -49,6 +49,8 @@ the receiver from the last three packets and never waits for the server.
 3-documents/                      Circuit diagrams and test procedures (PDF).
 4-older-versions/                 Superseded sketches. Do not edit or revive.
 START-HERE.txt                    One-page tour of the folder, for the founder.
+.github/workflows/deploy.yml      Auto-deploy: a push to main that changes 2-website/ uploads
+                                  the four site files to Hostinger over FTPS.
 IMPLEMENTATION-GUIDE.md           Step-by-step: boards, Arduino IDE, desk test, hosting,
                                   receiver, client hand-over, outdoors. Start here to build it.
 ```
@@ -148,10 +150,17 @@ and also works as a login handle.
 **Wrong key and wrong PIN return an identical message.** The login form must not
 reveal which keys exist. Six failures lock the account for 15 minutes.
 
-**The admin portal cannot see water readings.** `admin_clients` never touches
-the readings table. This is a promise that can be made to customers in writing;
-it is one line away from being broken, so do not "improve" that query. Client
-PINs are hashed and never retrievable.
+**The admin portal cannot see water readings.** `admin_clients` reads only the
+`clients` and `devices` tables: the alert flag, the time of the last upload and the
+sensor flag all come from columns on the device row (`lv_alert`, `last_seen`,
+`sensor_ok`). It never reads `readings` or `history` and never selects a level; this
+was tested by renaming both tables away and confirming the admin board still works.
+This is a promise that can be made to customers in writing; it is one line away from
+being broken, so do not "improve" that query. Client PINs are hashed and never
+retrievable. The admin's PDF (`Download status PDF`) is status only for the same
+reason. **Pending decision (founder, 2026-10-05):** the founder asked for the
+recorded data to be exportable "for both client and admin portal". Giving the admin
+the readings would end this promise, so it was NOT built; ask before doing it.
 
 **`admin_setup` works exactly once**, while the admins table is empty, then
 refuses forever. There is no password reset and no second admin. On the site it
@@ -205,6 +214,22 @@ no sensor packet ever; belongs to whichever Tank/River view is open, since its k
 not known yet). On the admin board these are the pills `ok / alert / sensor lost /
 offline / waiting`, a "Sensor lost" count and filter. They come from `devices.sensor_ok`
 and the last alert flag only, so the admin board still never touches `level_mm`.
+
+**Live data and reports (client dashboard).** The dashboard polls `a=nodes` every 2 s
+(skipping a poll if the last one is still in flight) and shows `LIVE - updated N s ago`.
+The level chart has a **Live | 7 days** switch (`a=history&range=live|7d`; live
+refreshes every 4 s, 7 days every minute). A **Download a report (PDF)** card lets the
+client pick Day, Month or Year (Day uses a date input; Month a month select plus year;
+no `type=month`, which Safari lacks) and calls `a=export&device&from&to`. If nothing
+was recorded the page says so and downloads nothing. The PDF is built in the browser by
+`AqPdf` (plain ES5 inside `index.html`: A4, built-in Helvetica/Courier, a JPEG logo drawn
+from the header image on a canvas, a hand-written xref table), so no library, no build
+step and no server load. A report holds the site (node) name, client ID, device key,
+type, full depth, danger/overflow mark, period, generated time with time zone, summary
+boxes (readings, highest, lowest, average, time at/over the mark, alerts), a chart with
+the danger line, and a paginated table (date and time, level, % of depth, status,
+signal). Times are the viewer's local time and say so. The admin's PDF is
+`AqPdf.adminReport`: totals plus one row per node, STATUS ONLY.
 
 **Wrong key, wrong PIN and unknown key still give one message.** Nothing on the
 start screen may reveal which keys or client IDs exist.
@@ -268,16 +293,17 @@ to flash and test.
 plain file or from a static server, every sign-in fails. That is expected, not a
 bug. PHP is installed on the founder's Mac (Homebrew, PHP 8.5): run
 `php -S 127.0.0.1:8000` in `2-website/` and test against that. A simulated
-receiver is one POST (use `"mode":1` for a tank; wait 5 s between posts, the
+receiver is one POST (use `"mode":1` for a tank; wait about 1 s between posts, the
 server throttles faster ones):
 
 ```
 curl -X POST 'http://127.0.0.1:8000/api.php?a=ingest' \
   -H 'X-Token: AQIDEMO000000001' -H 'Content-Type: application/json' \
-  -d '{"level":1840,"gap":1160,"depth":3000,"danger":2400,"mode":0,"alert":0,"rssi":-92,"snr":7.5}'
+  -d '{"level":1840,"gap":1160,"depth":3000,"danger":2400,"mode":0,"alert":0,"rssi":-92,"snr":7.5,"age":0}'
 ```
 
-The reply carries the device key to activate on the site.
+The reply carries the device key to activate on the site. Add `"age":120` to see
+SENSOR LOST, `"age":-1` for a receiver that has never heard its sensor.
 
 `2-website/aquaiots.sqlite` created by local testing is throw-away data. It is
 git-ignored; delete it before uploading to hosting so the live site starts empty.
@@ -285,6 +311,19 @@ git-ignored; delete it before uploading to hosting so the live site starts empty
 Headless Chrome screenshots of a page scrolled to a hash come out blank or with
 the header floating mid-image. That is the capture, not the page: check
 `scrollY` and element rects through the DOM instead.
+
+**Auto-deploy.** `.github/workflows/deploy.yml` runs on a push to `main` that touches
+`2-website/` (or by the "Run workflow" button): `php -l api.php`, then
+`SamKirkland/FTP-Deploy-Action` (pinned to the commit of v4.3.5) uploads `2-website/`
+over FTPS. It excludes `aquaiots.sqlite*`, `CLAUDE.md` and `README.txt`, and the action
+only deletes files it uploaded itself, so the live database is never touched. It is inert
+until the repo secrets `FTP_SERVER`, `FTP_USERNAME`, `FTP_PASSWORD` (and optionally
+`FTP_SERVER_DIR`) exist; without them it ends green and says it skipped. Reason it is a
+workflow and not Hostinger's own Git feature: the site lives in the `2-website/`
+subfolder, and Hostinger's Git deploy would publish the whole repo (firmware, notes) with
+`index.html` and `.htaccess` in the wrong place. Never put FTP credentials in a file.
+Because of this, never edit the live files in Hostinger's File Manager: the next push
+overwrites them. Setup steps: `IMPLEMENTATION-GUIDE.md` section 5b.
 
 Git: remote `origin` is https://github.com/jeetmagician/flood.git, branch `main`
 (public). GitHub holds the code only; the site is not hosted there. Commits carry
@@ -350,8 +389,9 @@ After flashing: join `FloodNode-01` (password `flood1234`), open `192.168.4.1`, 
 eight-character key in the blue bar, activate it on the site. Recommended order: flash
 the offline receiver first for the desk test, then the cloud one.
 
-**What the receiver sends** every 25 s (UPLOAD_SEC), and immediately when an alert
-starts:
+**What the receiver sends** every 2 s (`UPLOAD_SEC`), and immediately when an alert
+starts. That interval is the website's whole delay: sensor to receiver is 0.5 s, the
+dashboard polls every 2 s, so a change shows within about 2-5 s (it was 25 s):
 
 ```
 POST https://<CLOUD_HOST>/api.php?a=ingest
@@ -359,6 +399,18 @@ Content-Type: application/json
 X-Token: AQI<chip id><flash id>
 {"level":1840,"gap":1160,"depth":3000,"danger":2400,"mode":0,"alert":0,"rssi":-92,"snr":7.5}
 ```
+
+**Why a 2 s upload does not endanger the siren.** The danger count increments per
+*received* packet and only resets when the level falls below the clear mark, so
+packets missed during an upload cannot reset it. The two real risks are handled in
+the sketch: (1) a TLS handshake takes 1-3 s with the radio deaf, so ONE connection is
+kept alive (`setReuse`, a global `WiFiClientSecure`) and later uploads take a few
+hundred ms; (2) a slow or dead server must not keep the radio deaf, so the timeout is
+2.5 s (`UPLOAD_TIMEOUT_MS`) and after a failed upload it waits `UPLOAD_RETRY_SEC`
+(10 s). The reply is read into a fixed `char` buffer through `writeToStream`
+(`ReplyBuf`), not `getString()`, because a `String` every 2 s would fragment the heap.
+This keep-alive code has been compiled and run against mock Arduino classes on a PC
+only; it MUST be desk-tested on a real board (see Open items).
 
 Reply: `{"ok":true,"code":"K7M2-9QXA","paired":false,"sensor":true}`. The site decides
 the state from this: `alert` = 1 is DANGER, level at 85% of the danger mark is
@@ -372,9 +424,23 @@ it last heard the *sensor* over LoRa (`-1` = never). The sender transmits every
 receiver online and `devices.sensor_ok = 0`; **no reading row is stored**, so the
 chart draws no flat line and the stale level is never passed off as live. A payload
 with no `age` (older firmware) counts as fresh, so old receivers keep working.
-Columns `devices.sensor_ts` / `sensor_ok` are added to an older database
+Columns `devices.sensor_ts` / `sensor_ok` / `lv_*` are added to an older database
 automatically on first request (`PRAGMA table_info` / `SHOW COLUMNS`, then
 `ALTER TABLE`).
+
+**Three places the data lives (all in `api.php`):**
+1. `devices.lv_*` + `depth_mm`/`danger_mm`/`mode`: the LATEST reading, updated on every
+   fresh upload. Both portals read the current state from here.
+2. `readings`: the live buffer, one row per upload, trimmed to `LIVE_KEEP_SEC` (2 h).
+   It feeds only the "Live" chart (last `LIVE_CHART_SEC` = 30 min, thinned to ~150
+   points by the server).
+3. `history`: ONE row per device per half hour (`slot = floor(ts/1800)`, so :00 and :30;
+   `UNIQUE(device_id, slot)` + `INSERT OR IGNORE`/`INSERT IGNORE`), kept `KEEP_DAYS`
+   (7). It feeds the "7 days" chart and the PDF reports. A year is only ~17,500 rows
+   per device, so set `KEEP_DAYS = 365` if month/year reports should mean anything.
+   `MIN_GAP_SEC` is now 1 so a 2 s receiver is never throttled. Pruning runs on about
+   1 in 30 uploads. Nothing is stored while the sensor is lost, so history has a gap
+   rather than a fake flat line.
 
 ---
 
@@ -417,10 +483,25 @@ existed and matched this file. In order, the work was:
     headless browser. The new firmware line was compiled with format checking on a PC
     (not for the board) and printed the right JSON for never / 5 s / 60 s / 0 s.
 11. **`IMPLEMENTATION-GUIDE.md`** written: the full build, test and hand-over path.
-12. **Git.** Repository created and pushed to https://github.com/jeetmagician/flood
+12. **Live data, history and PDF reports (2026-10-05).** Founder reported a ~25 s delay,
+    asked for a record every 30 minutes kept 7 days, and PDF export by day/month/year
+    for client and admin. Done: receiver uploads every 2 s over one kept-alive TLS
+    connection with failure backoff and no `String`; `api.php` split into latest /
+    live buffer / half-hour history, with migration and pruning; dashboard polls every
+    2 s, Live | 7 days chart, export card; `AqPdf` writer; admin status PDF. Admin
+    readings export deliberately NOT built (see Security decisions). Tested against the
+    real PHP backend and a real browser: 40 uploads 1.1 s apart showed instantly (age
+    0 s) and wrote 40 live rows but 1 history row; 4 planted 9-day-old history rows
+    were pruned; export refused without a session, for another client's device, and
+    for a bad period; the admin board worked with `readings` and `history` renamed
+    away; the page generated day and month PDFs and an admin PDF (valid xref, logo,
+    multi-page, empty-period) that were rendered and read; the sensor-lost, new-device
+    and old-firmware paths still pass. Not tested: the new firmware on a board.
+13. **Auto-deploy.** Added the workflow above and the setup guide (5b). Pending on the founder: create the Hostinger FTP account and add the three GitHub secrets.
+14. **Git.** Repository created and pushed to https://github.com/jeetmagician/flood
     (public). Commits so far: `909639a` first import, `1e38ea4` two-door site and
     brand, `89998aa` docs and `.txt` firmware, `9b371c1` texture and theme switch,
-    `7d65c58` run/firmware guide and build log, then the sensor-lost fix and guide.
+    `7d65c58` run/firmware guide and build log, `b289116` sensor-lost fix and guide; the live-data / history / PDF work follows.
 
 **Tested against the real PHP backend (via curl and a headless browser):** admin
 setup once then refusal, admin login and wrong password, no data without a session,
@@ -445,9 +526,21 @@ layout on a real phone, and the tank view, admin board and story page in light m
   before any commercial deployment, not for prototyping.
 - No SMS fallback. Worth adding (SIM800L on the receiver) for sites with no
   broadband, where an alert text beats no alert at all.
-- **`readReply()` in the cloud receiver uses Arduino `String`**
-  (`http.getString()`), against the fixed-`char`-buffers rule, on every upload.
-  Replace with a bounded read into a `char` buffer.
+- **The 2 s keep-alive uploader has not run on a real ESP8266.** Desk-test it before
+  trusting it: Serial Monitor should show `cloud 200` and not stall, the local page at
+  192.168.4.1 must stay responsive, the siren must still trigger at the danger mark,
+  and heap should stay steady for an hour. If it misbehaves, raise `UPLOAD_SEC` (5 is
+  safe) or unplug the Wi-Fi to confirm the siren is unaffected. A host that closes idle
+  connections is handled: the next upload reconnects.
+- **Hosting load grows with devices:** one device is about 0.5 requests/s. A few dozen
+  are fine on shared hosting; for hundreds raise `UPLOAD_SEC` or move to a VPS.
+- **Retention is 7 days as requested**, so Month and Year reports only ever contain the
+  last 7 days. Raise `KEEP_DAYS` (365 costs ~17,500 rows per device) if real monthly or
+  yearly reports are wanted.
+- **Admin portal still cannot see or export water readings** (see Security decisions).
+  The founder asked for it; awaiting an explicit decision to end that promise.
+- History records the FIRST fresh reading of each half hour, so a flood peak between two
+  samples is not in the PDF. A per-slot maximum column would fix it if wanted.
 - A receiver flashed with the *old* sketch still works but cannot report `age`, so a
   dead sensor on it still looks live. Reflash the cloud receiver to get SENSOR LOST.
 - A WiFi-setup box on the receiver's own page (name, password, Connect) so the WiFi can
@@ -458,6 +551,6 @@ layout on a real phone, and the tank view, admin board and story page in light m
   seeing readings.
 - Phone layout is unverified on a real phone; headless Chrome cannot go below
   about 500 px wide.
-- The new firmware line has been compiled only on a PC; it has not been flashed to a board.
+- All firmware changes have been compiled only against mocks on a PC; none has been flashed to a board.
 - The lockout (six wrong PINs), device post throttle, 90-day pruning, MySQL mode
   and real cPanel hosting are untested.

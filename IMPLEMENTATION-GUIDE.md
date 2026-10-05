@@ -148,9 +148,55 @@ When this works, the hardware is good. Only then go on. Bench-test procedure det
 
 Settings at the top of `api.php` you may want to change: `KEEP_DAYS` (readings kept, 90),
 `ONLINE_SEC` (180 — no upload this long means OFFLINE), `SENSOR_LOST_SEC` (30 — see section
-8), `MAX_TRIES` / `LOCK_SEC` (six wrong PINs lock an account for 15 minutes).
+8), `KEEP_DAYS` (7 — how long the half-hour history is kept), `MAX_TRIES` / `LOCK_SEC` (six wrong PINs lock an account for 15 minutes).
 If your host does not allow SQLite, switch to MySQL by editing the five `MYSQL_` lines at the
 top; the tables are created automatically either way.
+
+---
+
+## 5b. Make a git push update the website automatically (one-time setup)
+
+Once this is set up, the rule is simple: **push to `main` on GitHub and the live website
+updates itself.** Without it, you would re-upload the four files by hand after every change.
+
+How it works: a workflow in `.github/workflows/deploy.yml` runs on every push that changes
+something under `2-website/`. It checks `api.php` for PHP errors (a broken file stops the
+deploy), then uploads only `index.html`, `admin.html`, `api.php` and `.htaccess` to Hostinger
+over FTPS. It never uploads or deletes your live database (`aquaiots.sqlite`), and it never
+uploads the firmware, the notes or the documents. Until you finish the steps below it does
+nothing at all and ends green with a note saying it skipped.
+
+**Step 1 — make an FTP account on Hostinger** (hPanel → *Files* → *FTP Accounts*):
+1. Create a new FTP account. Pick a username and a strong password, and write them down.
+2. Set its folder to the site's web folder, normally `public_html`. (If it asks for a
+   directory, choose the one that holds your `index.html` today.)
+3. Note the **FTP hostname** hPanel shows for it (an address like `ftp.yourdomain.com` or an
+   IP number).
+
+**Step 2 — give GitHub the three details** (your repo → *Settings* → *Secrets and variables*
+→ *Actions* → *New repository secret*). Add these exactly:
+
+| Secret name | Value |
+|---|---|
+| `FTP_SERVER` | the FTP hostname from step 1 |
+| `FTP_USERNAME` | the FTP username |
+| `FTP_PASSWORD` | the FTP password |
+| `FTP_SERVER_DIR` | *(optional)* only if the FTP account's folder is **not** already the site's web folder, for example `public_html/` |
+
+Secrets are write-only on GitHub: nobody, including you, can read them back afterwards, and
+they are not visible in the public repository.
+
+**Step 3 — try it.** On GitHub open *Actions* → *Deploy website to Hostinger* → *Run workflow*.
+A green tick means the files are on the server. Open your site and check it. After that, every
+push that changes `2-website/` redeploys automatically; you can watch each one under *Actions*.
+
+**If it fails**
+- *Could not connect / timed out / TLS error:* some plans only allow plain FTP, not FTPS. In
+  `.github/workflows/deploy.yml` change `protocol: ftps` to `protocol: ftp` and push again.
+- *The site did not change:* the FTP account's folder is probably not the web folder. Set
+  `FTP_SERVER_DIR` to `public_html/` (or the right path) and run it again.
+- *Never edit the live files by hand in Hostinger's File Manager* after this: the next push
+  would overwrite your edit.
 
 ---
 
@@ -179,7 +225,7 @@ The key is **made by your website**, not by the board: the first time a receiver
 site, `api.php` creates a record for it and answers with the key, and the receiver shows it.
 Until it has reached the site at least once, no key exists.
 
-**What the receiver sends** every 25 seconds (and at once when an alert starts):
+**What the receiver sends** every 2 seconds (and at once when an alert starts). This is what makes the website live; it keeps one secure connection open so each upload is quick, and if the server is slow it backs off so it can never keep the radio from listening:
 
 ```
 POST https://yourdomain.in/api.php?a=ingest
@@ -240,6 +286,28 @@ antenna and range. The siren on the receiver does not depend on any of this.
 
 ---
 
+## 8b. Live data, history and PDF reports
+
+- **Live:** the dashboard shows `LIVE · updated N s ago` and refreshes every 2 seconds. The
+  chart has a **Live** view (last 30 minutes) and a **7 days** view.
+- **History:** one reading is recorded for every half hour (on the hour and at :30) and kept
+  for 7 days (`KEEP_DAYS` in `api.php`). To keep a month or a year, raise that number — a year
+  is only about 17,500 rows per device.
+- **PDF report (client):** on the dashboard, *Download a report (PDF)*. Choose **Day**,
+  **Month** or **Year** and press **Download PDF**. It has the site name, client ID, device
+  key, the period, a summary, a chart and the table of readings. If nothing was recorded for
+  that period, it tells you instead of downloading an empty file.
+- **PDF report (administrator):** *Download status PDF* on the admin board lists every client
+  and node and whether it is OK, in alert, offline, sensor lost or waiting. It deliberately
+  contains **no water readings**, so you can promise customers in writing that nobody at
+  Aquaiots can see their water data.
+- **After a site upgrade**, flash the current `node_receiver_8266_cloud` too, or the site stays
+  at the old 25-second delay. Desk-test the new receiver before trusting it: Serial Monitor
+  steady on `cloud 200`, the page at `192.168.4.1` still responsive, and the siren still
+  triggering at the danger mark.
+
+---
+
 ## 9. Install outdoors
 
 1. Re-read the **power rules** in section 1 and `Flood_Node_Circuit_Diagrams.pdf` (it also
@@ -286,7 +354,7 @@ open items in `CLAUDE.md`. The website will never ask for anyone's WiFi password
 | Receiver sketch for the website | `node_receiver_8266_cloud` |
 | Receiver sketch for a desk test | `node_receiver_8266_offline` |
 | Radio | 433 MHz, SF7, BW 125 kHz, CR 4/5, sync 0x34, 16-byte packet |
-| Upload interval | every 25 s, and immediately on alert |
+| Upload interval | every 2 s (`UPLOAD_SEC`), and immediately on alert; 10 s retry after a failure |
 | OFFLINE after | 180 s without an upload |
 | SENSOR LOST after | 30 s without hearing the sensor |
 | Siren | confirms on 3 packets past the limit; sounds at least 30 s; latches on link loss |

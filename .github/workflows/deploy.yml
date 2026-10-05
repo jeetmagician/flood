@@ -1,0 +1,75 @@
+# Deploys the website to Hostinger every time something under 2-website/ is pushed
+# to main. Only the site files go up (index.html, admin.html, api.php, .htaccess).
+#
+# It does NOTHING until you add the FTP secrets (see "One-time setup" in
+# IMPLEMENTATION-GUIDE.md): without them the run finishes green and says it skipped.
+#
+# What it will never do:
+#   - upload or delete the live database (aquaiots.sqlite*): those are excluded below,
+#     and the action only ever removes files it uploaded itself
+#   - upload the firmware, the notes or the documents: only 2-website/ is deployed
+#   - deploy a broken api.php: a PHP syntax check runs first and stops the deploy
+
+name: Deploy website to Hostinger
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '2-website/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:          # the "Run workflow" button on GitHub, to redeploy by hand
+
+# Two pushes in a row must not upload at the same time.
+concurrency:
+  group: deploy-website
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      FTP_SERVER:   ${{ secrets.FTP_SERVER }}
+      FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+      FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Check api.php for syntax errors
+        run: |
+          if command -v php >/dev/null 2>&1; then
+            php -l 2-website/api.php
+          else
+            echo "::notice::php is not installed on this runner, syntax check skipped"
+          fi
+
+      - name: Say so if the Hostinger secrets are missing
+        if: ${{ env.FTP_SERVER == '' || env.FTP_USERNAME == '' || env.FTP_PASSWORD == '' }}
+        run: echo "::notice::Deployment skipped. Add FTP_SERVER, FTP_USERNAME and FTP_PASSWORD under Settings > Secrets and variables > Actions to switch auto-deploy on."
+
+      - name: Upload the website to Hostinger
+        if: ${{ env.FTP_SERVER != '' && env.FTP_USERNAME != '' && env.FTP_PASSWORD != '' }}
+        # SamKirkland/FTP-Deploy-Action v4.3.5, pinned to its exact commit so a later
+        # change to that tag cannot change what runs with your password.
+        uses: SamKirkland/FTP-Deploy-Action@8e83cea8672e3fbcbb9fdafff34debf6ae4c5f65
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps
+          local-dir: ./2-website/
+          # The FTP account's own folder is normally the site root already. Set the
+          # optional FTP_SERVER_DIR secret (for example public_html/) only if it is not.
+          server-dir: ${{ secrets.FTP_SERVER_DIR || './' }}
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            CLAUDE.md
+            README.txt
+            **/aquaiots.sqlite*
+            aquaiots.sqlite*
