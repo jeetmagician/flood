@@ -319,7 +319,7 @@
          box-shadow:0 30px 70px -40px rgba(55,198,232,.4); }
   label{ display:block; font-family:var(--mono); font-size:10.5px; letter-spacing:.14em;
          text-transform:uppercase; color:var(--fg-dim); margin:16px 0 7px; }
-  input[type=text],input[type=password],input[type=email]{
+  input[type=text],input[type=password],input[type=email],input[type=date],input[type=number],select{
     width:100%; padding:12px 13px; border-radius:7px; border:1px solid var(--line);
     background:var(--input-bg); color:var(--fg); font-family:var(--body); font-size:16px;
     transition:border-color .15s, box-shadow .15s;
@@ -445,6 +445,16 @@
   .ktag{ font-size:9px; letter-spacing:.14em; margin-left:9px; padding:2px 6px; border-radius:3px;
          border:1px solid var(--line); color:var(--fg-dim); }
   .nodebar button.off{ opacity:.55; }
+
+  /* ---------- live chart switch and the report card ---------- */
+  .chart-head{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:6px; }
+  .chart-head .lab{ margin:0; }
+  .chart-head .seg{ margin-left:auto; }
+  .seg-sm button{ padding:6px 12px; font-size:10px; }
+  .exportcard{ margin-top:16px; }
+  .exp-row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+  .exp-row input,.exp-row select{ width:auto; padding:10px 11px; font-size:14px; }
+  .exp-row .btn{ padding:11px 20px; font-size:14px; }
 
   /* ---------- admin view ---------- */
   #adminView .wrap{ padding-block:60px 90px; }
@@ -842,7 +852,13 @@
         </div>
 
         <div class="card g3">
-          <div class="lab">Level &middot; recent readings</div>
+          <div class="chart-head">
+            <div class="lab" id="chartLab">Level &middot; last 30 min &middot; live</div>
+            <div class="seg seg-sm" id="rngSeg" role="radiogroup" aria-label="Chart range">
+              <button type="button" class="on" data-r="live" role="radio">Live</button>
+              <button type="button" data-r="7d" role="radio">7 days</button>
+            </div>
+          </div>
           <svg class="viz" viewBox="0 0 460 172" role="img" aria-label="Water level over the recent readings">
             <defs>
               <linearGradient id="ag" x1="0" y1="0" x2="0" y2="1">
@@ -879,6 +895,23 @@
           <div class="msg" id="addMsg"></div>
         </div>
       </div>
+
+      <div class="card exportcard" id="exportCard">
+        <div class="lab">Download a report (PDF)</div>
+        <div class="exp-row">
+          <div class="seg" id="expKind" role="radiogroup" aria-label="Report period">
+            <button type="button" class="on" data-k="day" role="radio">Day</button>
+            <button type="button" data-k="month" role="radio">Month</button>
+            <button type="button" data-k="year" role="radio">Year</button>
+          </div>
+          <span id="expDayW"><input type="date" id="expDay" aria-label="Day"></span>
+          <span id="expMW" hidden><select id="expM" aria-label="Month"></select></span>
+          <span id="expYW" hidden><input type="number" id="expY" min="2020" max="2100" step="1" aria-label="Year" style="width:96px"></span>
+          <button class="btn" id="expGo" type="button">Download PDF</button>
+        </div>
+        <p class="hintline" id="expHint"></p>
+        <div class="msg" id="expMsg" role="status"></div>
+      </div>
     </div>
   </div>
 </div></div>
@@ -894,6 +927,7 @@
       </div>
       <span class="pushr" style="display:flex;gap:10px;align-items:center">
         <span class="sync" id="adSync"></span>
+        <button class="linkbtn" id="adPdf" type="button">Download status PDF</button>
         <button class="linkbtn" id="adOut" type="button">Sign out</button>
       </span>
     </div>
@@ -947,6 +981,302 @@
 </div></footer>
 
 <script>
+/* AqPdf begin
+   A small PDF writer: A4, the built-in Helvetica and Courier fonts, lines, rectangles,
+   polylines and one optional JPEG (the logo). No library, no build step, nothing sent
+   anywhere: the report is built in the browser from data the browser already holds.
+   Coordinates are in points from the TOP-left of the page, y growing downwards. */
+var AqPdf = (function(){
+  var PW = 595, PH = 842, M = 40;
+  var INK = [11,31,42], DIM = [90,112,126], LINE = [205,223,232], CY = [11,127,166],
+      BAD = [192,57,43], GOOD = [21,122,76], WARN = [154,98,5], ZEBRA = [243,248,251];
+
+  function n2(x){ return String(Math.round(x * 100) / 100); }
+  function col(c){ return n2(c[0] / 255) + ' ' + n2(c[1] / 255) + ' ' + n2(c[2] / 255); }
+  /* Text goes out in WinAnsi: escape the PDF specials, keep the few typographic
+     characters we use, and show anything else as '?'. */
+  function esc(t){
+    t = String(t); var o = '';
+    for (var i = 0; i < t.length; i++){
+      var c = t.charCodeAt(i), ch = t.charAt(i);
+      if (ch === '(' || ch === ')' || ch === '\\') o += '\\' + ch;
+      else if (c === 0xB7) o += '\\267';
+      else if (c === 0x2014) o += '\\227';
+      else if (c === 0x2013) o += '\\226';
+      else if (c === 0x20B9) o += 'Rs ';
+      else if (c < 32 || c > 126) o += '?';
+      else o += ch;
+    }
+    return o;
+  }
+  function clip(s, n){ s = String(s); return s.length > n ? s.slice(0, n - 2) + '..' : s; }
+  function tw(s, size, mono){ return String(s).length * size * (mono ? 0.6 : 0.5); }
+  function wrap(s, max){
+    var words = String(s).split(' '), lines = [], cur = '';
+    for (var i = 0; i < words.length; i++){
+      if ((cur + ' ' + words[i]).length > max && cur){ lines.push(cur); cur = words[i]; }
+      else cur = cur ? cur + ' ' + words[i] : words[i];
+    }
+    if (cur) lines.push(cur);
+    return lines;
+  }
+
+  function Page(){ this.ops = []; }
+  Page.prototype.text = function(x, y, s, size, font, c){
+    this.ops.push('BT /' + (font || 'F1') + ' ' + size + ' Tf ' + col(c || INK) + ' rg 1 0 0 1 ' +
+                  n2(x) + ' ' + n2(PH - y) + ' Tm (' + esc(s) + ') Tj ET');
+  };
+  Page.prototype.line = function(x1, y1, x2, y2, w, c, dash){
+    this.ops.push('q ' + (dash ? '[' + dash + '] 0 d ' : '') + n2(w || 0.5) + ' w ' + col(c || LINE) + ' RG ' +
+                  n2(x1) + ' ' + n2(PH - y1) + ' m ' + n2(x2) + ' ' + n2(PH - y2) + ' l S Q');
+  };
+  Page.prototype.rect = function(x, y, w, h, fill, stroke){
+    var op = fill && stroke ? 'B' : (fill ? 'f' : 'S');
+    this.ops.push('q ' + (fill ? col(fill) + ' rg ' : '') + (stroke ? col(stroke) + ' RG 0.5 w ' : '') +
+                  n2(x) + ' ' + n2(PH - y - h) + ' ' + n2(w) + ' ' + n2(h) + ' re ' + op + ' Q');
+  };
+  Page.prototype.poly = function(pts, w, c){
+    if (pts.length < 2) return;
+    var s = 'q 1 J 1 j ' + n2(w || 1) + ' w ' + col(c) + ' RG ' + n2(pts[0][0]) + ' ' + n2(PH - pts[0][1]) + ' m';
+    for (var i = 1; i < pts.length; i++) s += ' ' + n2(pts[i][0]) + ' ' + n2(PH - pts[i][1]) + ' l';
+    this.ops.push(s + ' S Q');
+  };
+  Page.prototype.image = function(x, y, w, h){
+    this.ops.push('q ' + n2(w) + ' 0 0 ' + n2(h) + ' ' + n2(x) + ' ' + n2(PH - y - h) + ' cm /Im1 Do Q');
+  };
+
+  /* ---------- turn pages into the bytes of a PDF file ---------- */
+  function latin1(s){ var u = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) u[i] = s.charCodeAt(i) & 255; return u; }
+  function pad10(n){ var s = String(n); while (s.length < 10) s = '0' + s; return s; }
+  function pdfDate(d){
+    function p(x){ return (x < 10 ? '0' : '') + x; }
+    return 'D:' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+  }
+  function assemble(pages, logo, title){
+    var chunks = [], offs = {}, len = 0;
+    function add(x){ var b = typeof x === 'string' ? latin1(x) : x; chunks.push(b); len += b.length; }
+    function obj(id, body){ offs[id] = len; add(id + ' 0 obj\n' + body + '\nendobj\n'); }
+
+    var hasImg = !!logo, imgId = 7, infoId = 6, first = hasImg ? 8 : 7, total = first + pages.length * 2;
+    var kids = [];
+    for (var i = 0; i < pages.length; i++) kids.push((first + i * 2) + ' 0 R');
+
+    add('%PDF-1.4\n%âãÏÓ\n');
+    obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
+    obj(2, '<< /Type /Pages /Kids [' + kids.join(' ') + '] /Count ' + pages.length + ' >>');
+    obj(3, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+    obj(4, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+    obj(5, '<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>');
+    obj(infoId, '<< /Title (' + esc(title) + ') /Producer (Aquaiots) /Creator (Aquaiots) /CreationDate (' + pdfDate(new Date()) + ') >>');
+    if (hasImg){
+      offs[imgId] = len;
+      add(imgId + ' 0 obj\n<< /Type /XObject /Subtype /Image /Width ' + logo.w + ' /Height ' + logo.h +
+          ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ' + logo.bytes.length + ' >>\nstream\n');
+      add(logo.bytes);
+      add('\nendstream\nendobj\n');
+    }
+    var res = '<< /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >>' + (hasImg ? ' /XObject << /Im1 ' + imgId + ' 0 R >>' : '') + ' >>';
+    for (var k = 0; k < pages.length; k++){
+      var pid = first + k * 2, cid = pid + 1, cs = pages[k].ops.join('\n');
+      obj(cid, '<< /Length ' + cs.length + ' >>\nstream\n' + cs + '\nendstream');
+      obj(pid, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + PW + ' ' + PH + '] /Resources ' + res + ' /Contents ' + cid + ' 0 R >>');
+    }
+    var xref = len, x = 'xref\n0 ' + total + '\n0000000000 65535 f \n';
+    for (var id = 1; id < total; id++) x += pad10(offs[id]) + ' 00000 n \n';
+    add(x + 'trailer\n<< /Size ' + total + ' /Root 1 0 R /Info ' + infoId + ' 0 R >>\nstartxref\n' + xref + '\n%%EOF\n');
+
+    var out = new Uint8Array(len), at = 0;
+    for (var c = 0; c < chunks.length; c++){ out.set(chunks[c], at); at += chunks[c].length; }
+    return out;
+  }
+
+  /* ---------- shared pieces ---------- */
+  function header(p, sp, title, sub){
+    var x = M;
+    if (sp.logo){ var lh = 50, lw = lh * sp.logo.w / sp.logo.h; p.image(M, 28, lw, lh); x = M + lw + 16; }
+    p.text(x, 52, title, 19, 'F2', INK);
+    p.text(x, 70, clip(sub, 60), 12, 'F1', CY);
+    p.line(M, 90, PW - M, 90, 1.2, CY);
+    return 104;
+  }
+  function kv(p, x, y, label, value){
+    p.text(x, y, label.toUpperCase(), 6.5, 'F1', DIM);
+    p.text(x, y + 12, clip(value, 52), 10, 'F2', INK);
+  }
+  function box(p, x, y, w, label, value, sub, c){
+    p.rect(x, y, w, 46, [250,252,253], LINE);
+    p.text(x + 7, y + 13, label.toUpperCase(), 6.2, 'F1', DIM);
+    p.text(x + 7, y + 31, value, 13, 'F2', c || INK);
+    if (sub) p.text(x + 7, y + 41, sub, 6.2, 'F1', DIM);
+  }
+  function footers(pages, sp, note){
+    for (var i = 0; i < pages.length; i++){
+      var p = pages[i];
+      p.line(M, 806, PW - M, 806, 0.6, LINE);
+      p.text(M, 818, 'Aquaiots  ·  Lachit Nagar, Guwahati, Assam 781007  ·  Customer care +91 70024 51825', 7, 'F1', DIM);
+      var pg = 'Page ' + (i + 1) + ' of ' + pages.length;
+      p.text(PW - M - tw(pg, 7), 818, pg, 7, 'F1', DIM);
+      if (note) p.text(M, 829, note, 6.5, 'F1', DIM);
+    }
+  }
+
+  /* ---------- the client's report ---------- */
+  function status(r, sp){
+    var danger = r.danger_mm > 0 ? r.danger_mm : sp.dangerMM;
+    if (r.alert) return sp.mode === 1 ? 'OVERFLOW' : 'DANGER';
+    if (r.level_mm < 0) return 'NO ECHO';
+    if (danger > 0 && r.level_mm >= danger * 0.85) return 'RISING';
+    return 'NORMAL';
+  }
+  function clientReport(sp){
+    var pages = [], p = new Page(); pages.push(p);
+    var rows = sp.rows || [], depth = Math.max(1, sp.depthMM || 1), danger = sp.dangerMM || 0, home = sp.mode === 1;
+
+    var y = header(p, sp, 'WATER LEVEL REPORT', sp.site);
+    kv(p, M, y + 4,  'Site / node', sp.site);          kv(p, M + 270, y + 4,  'Client ID', sp.clientCode);
+    kv(p, M, y + 38, 'Device key', sp.devKey);         kv(p, M + 270, y + 38, 'Type', home ? 'Home tank' : 'River channel');
+    kv(p, M, y + 72, 'Full depth', (depth / 1000).toFixed(2) + ' m');
+    kv(p, M + 270, y + 72, home ? 'Overflow mark' : 'Danger mark', danger > 0 ? (danger / 1000).toFixed(2) + ' m' : '-');
+    kv(p, M, y + 106, 'Period', sp.periodLabel);       kv(p, M + 270, y + 106, 'Generated', sp.generatedLabel + '  (' + sp.tzLabel + ')');
+
+    var good = [], i, alerts = 0, above = 0, sum = 0, mx = -1, mn = 1e9;
+    for (i = 0; i < rows.length; i++){
+      var r = rows[i];
+      if (r.alert) alerts++;
+      if (r.level_mm >= 0){
+        good.push(r); sum += r.level_mm; if (r.level_mm > mx) mx = r.level_mm; if (r.level_mm < mn) mn = r.level_mm;
+        if (danger > 0 && r.level_mm >= danger) above++;
+      }
+    }
+    var by = y + 146, bw = 80, gap = 7.0, bx = M;
+    var avg = good.length ? sum / good.length : 0;
+    box(p, bx, by, bw, 'Readings', String(rows.length), 'one per 30 min'); bx += bw + gap;
+    box(p, bx, by, bw, 'Highest', good.length ? (mx / 1000).toFixed(2) + ' m' : '-', good.length ? Math.round(100 * mx / depth) + '% of depth' : ''); bx += bw + gap;
+    box(p, bx, by, bw, 'Lowest', good.length ? (mn / 1000).toFixed(2) + ' m' : '-', good.length ? Math.round(100 * mn / depth) + '% of depth' : ''); bx += bw + gap;
+    box(p, bx, by, bw, 'Average', good.length ? (avg / 1000).toFixed(2) + ' m' : '-', good.length ? Math.round(100 * avg / depth) + '% of depth' : ''); bx += bw + gap;
+    box(p, bx, by, bw, home ? 'At overflow' : 'At/over danger', String(above), above ? '~' + (above * 0.5) + ' h' : '', above ? BAD : INK); bx += bw + gap;
+    box(p, bx, by, bw, 'Alerts', String(alerts), 'readings in alert', alerts ? BAD : INK);
+
+    var top = by + 62;
+    if (!rows.length){
+      p.rect(M, top, PW - 2 * M, 70, [250,252,253], LINE);
+      p.text(M + 14, top + 28, 'No readings were recorded for this period.', 12, 'F2', INK);
+      p.text(M + 14, top + 46, 'Readings are kept for the last ' + sp.keepDays + ' days, one every 30 minutes, so an older period may be empty.', 8.5, 'F1', DIM);
+      footers(pages, sp, 'Water level in metres above the ' + (home ? 'tank floor.' : 'river bed.'));
+      return assemble(pages, sp.logo, 'Aquaiots water level report - ' + sp.site + ' - ' + sp.periodLabel);
+    }
+
+    // ----- chart
+    p.text(M, top, 'LEVEL OVER THE PERIOD  (metres)', 7, 'F2', DIM);
+    var x0 = M + 34, x1 = PW - M, yT = top + 10, yB = top + 148, ph = yB - yT;
+    var t0 = rows[0].ts, t1 = rows[rows.length - 1].ts; if (t1 <= t0) t1 = t0 + 1800;
+    p.rect(x0, yT, x1 - x0, ph, [250,252,253], null);
+    for (i = 0; i <= 4; i++){
+      var gy = yB - ph * i / 4, lab = (depth * i / 4000).toFixed(2);
+      p.line(x0, gy, x1, gy, 0.4, LINE);
+      p.text(x0 - 4 - tw(lab, 7, true), gy + 2.5, lab, 7, 'F3', DIM);
+    }
+    if (danger > 0 && danger <= depth){
+      var dy = yB - ph * danger / depth;
+      p.line(x0, dy, x1, dy, 0.9, BAD, '4 3');
+      p.text(x1 - 4 - tw((home ? 'overflow ' : 'danger ') + (danger / 1000).toFixed(2) + ' m', 6.5), dy - 3,
+             (home ? 'overflow ' : 'danger ') + (danger / 1000).toFixed(2) + ' m', 6.5, 'F1', BAD);
+    }
+    var pts = [], k;
+    for (i = 0; i < good.length; i++){
+      pts.push([x0 + (good[i].ts - t0) / (t1 - t0) * (x1 - x0), yB - ph * Math.min(1, good[i].level_mm / depth)]);
+    }
+    if (pts.length === 1) pts.push([pts[0][0] + 1, pts[0][1]]);
+    p.poly(pts, 1.3, CY);
+    if (good.length <= 120) for (k = 0; k < pts.length; k++) p.rect(pts[k][0] - 1.2, pts[k][1] - 1.2, 2.4, 2.4, CY, null);
+    p.line(x0, yB, x1, yB, 0.8, DIM);
+    var span = t1 - t0, ticks = 6;
+    for (k = 0; k <= ticks; k++){
+      var tx = x0 + (x1 - x0) * k / ticks, tt = t0 + span * k / ticks;
+      p.line(tx, yB, tx, yB + 3, 0.6, DIM);
+      var tl = span <= 36 * 3600 ? sp.fmtTime(tt) : sp.fmtDay(tt);
+      var lx = k === 0 ? tx : (k === ticks ? tx - tw(tl, 7) : tx - tw(tl, 7) / 2);
+      p.text(lx, yB + 13, tl, 7, 'F1', DIM);
+    }
+
+    // ----- table
+    var cx = [M, M + 150, M + 215, M + 285, M + 375];
+    function tableHead(pg, yy){
+      pg.rect(M, yy - 9, PW - 2 * M, 14, [228,238,244], null);
+      pg.text(cx[0] + 4, yy + 1, 'DATE & TIME', 7, 'F2', INK);
+      pg.text(cx[1], yy + 1, 'LEVEL (m)', 7, 'F2', INK);
+      pg.text(cx[2], yy + 1, '% DEPTH', 7, 'F2', INK);
+      pg.text(cx[3], yy + 1, 'STATUS', 7, 'F2', INK);
+      pg.text(cx[4], yy + 1, 'SIGNAL (dBm)', 7, 'F2', INK);
+    }
+    var ty = top + 188;
+    p.text(M, ty - 12, 'RECORDED READINGS  (one every 30 minutes)', 7, 'F2', DIM);
+    ty += 8; tableHead(p, ty); ty += 14;
+    for (i = 0; i < rows.length; i++){
+      if (ty > 790){
+        p = new Page(); pages.push(p);
+        p.text(M, 40, 'WATER LEVEL REPORT  ·  ' + clip(sp.site, 40) + '  ·  ' + sp.periodLabel, 8, 'F2', DIM);
+        p.line(M, 48, PW - M, 48, 0.8, CY);
+        ty = 72; tableHead(p, ty); ty += 14;
+      }
+      var rr = rows[i], st = status(rr, sp), lv = rr.level_mm;
+      if (i % 2) p.rect(M, ty - 8, PW - 2 * M, 11, ZEBRA, null);
+      p.text(cx[0] + 4, ty, sp.fmtTs(rr.ts), 7.5, 'F3', INK);
+      p.text(cx[1], ty, lv >= 0 ? (lv / 1000).toFixed(2) : '-', 7.5, 'F3', INK);
+      p.text(cx[2], ty, lv >= 0 ? Math.round(100 * lv / Math.max(1, rr.depth_mm || depth)) + '%' : '-', 7.5, 'F3', INK);
+      p.text(cx[3], ty, st, 7.5, 'F2', st === 'NORMAL' ? GOOD : (st === 'RISING' ? WARN : BAD));
+      p.text(cx[4], ty, String(rr.rssi), 7.5, 'F3', DIM);
+      ty += 11;
+    }
+    footers(pages, sp, 'Water level in metres above the ' + (home ? 'tank floor' : 'river bed') + '. Times are shown in ' + sp.tzLabel + '. One reading is recorded for every half hour.');
+    return assemble(pages, sp.logo, 'Aquaiots water level report - ' + sp.site + ' - ' + sp.periodLabel);
+  }
+
+  /* ---------- the administrator's report: STATUS ONLY, no water readings ---------- */
+  function adminReport(sp){
+    var pages = [], p = new Page(); pages.push(p);
+    var y = header(p, sp, 'FLEET STATUS REPORT', 'Administrator');
+    kv(p, M, y + 4, 'Generated', sp.generatedLabel + '  (' + sp.tzLabel + ')');
+    kv(p, M + 270, y + 4, 'Scope', 'Every client and node, current status');
+    var by = y + 40, bw = 95, gap = 10, bx = M, i;
+    for (i = 0; i < sp.totals.length; i++){
+      box(p, bx, by, bw, sp.totals[i].label, String(sp.totals[i].value), '', sp.totals[i].hot ? BAD : INK); bx += bw + gap;
+    }
+    var ny = by + 64, note = wrap('This report shows whether each node is powered, connected and alarming. It does not contain water levels, readings or any client PIN: the administrator portal has no access to them, by design.', 105);
+    for (i = 0; i < note.length; i++) p.text(M, ny + i * 11, note[i], 8, 'F1', DIM);
+    var cx = [M, M + 62, M + 185, M + 262, M + 310, M + 378, M + 452];
+    function head(pg, yy){
+      pg.rect(M, yy - 9, PW - 2 * M, 14, [228,238,244], null);
+      var h = ['CLIENT', 'SITE / NODE', 'DEVICE KEY', 'TYPE', 'STATUS', 'LAST REPORT', 'ACTIVATED'];
+      for (var k = 0; k < h.length; k++) pg.text(cx[k] + (k === 0 ? 4 : 0), yy + 1, h[k], 7, 'F2', INK);
+    }
+    var ty = ny + note.length * 11 + 24; head(p, ty); ty += 14;
+    if (!sp.rows.length){ p.text(M + 4, ty, 'No clients have activated a device yet.', 8, 'F1', DIM); }
+    for (i = 0; i < sp.rows.length; i++){
+      if (ty > 790){
+        p = new Page(); pages.push(p);
+        p.text(M, 40, 'FLEET STATUS REPORT  ·  ' + sp.generatedLabel, 8, 'F2', DIM);
+        p.line(M, 48, PW - M, 48, 0.8, CY); ty = 72; head(p, ty); ty += 14;
+      }
+      var r = sp.rows[i];
+      if (i % 2) p.rect(M, ty - 8, PW - 2 * M, 11, ZEBRA, null);
+      p.text(cx[0] + 4, ty, r.client, 7.5, 'F3', CY);
+      p.text(cx[1], ty, clip(r.site, 21), 7.5, 'F3', INK);
+      p.text(cx[2], ty, r.key, 7.5, 'F3', DIM);
+      p.text(cx[3], ty, r.kind, 7.5, 'F3', DIM);
+      p.text(cx[4], ty, r.status, 7.5, 'F2', r.status === 'OK' ? GOOD : (r.status === 'ALERT' || r.status === 'SENSOR LOST' ? BAD : DIM));
+      p.text(cx[5], ty, clip(r.last, 12), 7.5, 'F3', INK);
+      p.text(cx[6], ty, r.activated, 7.5, 'F3', DIM);
+      ty += 11;
+    }
+    footers(pages, sp, 'Status only. No water readings are included in the administrator report.');
+    return assemble(pages, sp.logo, 'Aquaiots fleet status report - ' + sp.generatedLabel);
+  }
+
+  return { clientReport: clientReport, adminReport: adminReport };
+})();
+/* AqPdf end */
+
 (function(){
 var $ = function(i){ return document.getElementById(i); };
 var API = 'api.php';
@@ -1154,6 +1484,7 @@ $('renameBtn').addEventListener('click', function(){
 
 /* ---- live view ---- */
 var current = null, nodes = [], timer = null, clientReady = false;
+var chartRange = 'live', histAt = 0, histKey = '', keepDays = 7, refreshing = false, expReady = false;
 
 /* Which kind of node this visit is about: 1 water tank, 0 river. The sender
    still decides what each device really is; this only filters the view. A
@@ -1188,19 +1519,24 @@ function showPanel(client, justActivated){
   $('who').textContent = 'Client ' + client.code;
   if (justActivated){ $('idbig').textContent = client.code; $('idcard').hidden = false; }
   refresh();
-  if (!timer) timer = setInterval(refresh, 5000);
+  if (!timer) timer = setInterval(refresh, 2000);   // 2 s: with a 2 s receiver this is what 'live' means
   if (location.hash !== '#client') location.hash = '#client'; else route();
 }
 
 function refresh(){
+  if (refreshing) return;                    // a slow reply must not stack up polls
+  refreshing = true;
   return get('a=nodes').then(function(j){
     nodes = j.nodes || [];
+    keepDays = j.keep_days || keepDays;
     $('empty').hidden = nodes.length > 0;
     $('live').hidden  = nodes.length === 0;
     if (!nodes.length){ $('nodebar').innerHTML = ''; return; }
     if (!current || !nodes.some(function(n){ return n.id === current; })) current = nodes[0].id;
+    if (!expReady) expInit();
     return draw();
-  }).catch(function(){ /* a dropped poll is not worth shouting about */ });
+  }).catch(function(){ /* a dropped poll is not worth shouting about */ })
+    .then(function(){ refreshing = false; });
 }
 
 /* A node that has never reported has no known kind yet, so it belongs to
@@ -1233,9 +1569,13 @@ function draw(){
   var node = nodes.filter(function(n){ return n.id === current; })[0];
   if (!node) return;
   paint(node);
-  if (!isMatch(node)){ chart([], node); return; }
-  return get('a=history&device=' + current + '&n=90').then(function(h){ chart(h.rows, node); })
-    .catch(function(){});
+  if (!isMatch(node)){ histKey = ''; chart([], node); return; }
+  // The live chart refreshes every few seconds, the 7-day one once a minute.
+  var key = current + ':' + chartRange, t = Date.now();
+  if (key === histKey && t - histAt < (chartRange === 'live' ? 4000 : 60000)) return;
+  histKey = key; histAt = t;
+  return get('a=history&device=' + current + '&range=' + chartRange).then(function(h){ chart(h.rows, node); })
+    .catch(function(){ histAt = 0; });
 }
 
 function wave(y){
@@ -1285,7 +1625,7 @@ function paint(n){
   if (mismatch) note.textContent = 'This node is a ' + (real.mode === 1 ? 'water tank' : 'river') + ' sensor, so it shows offline in the ' + (home ? 'Water tank' : 'River') + ' view. Switch to ' + (real.mode === 1 ? 'Water tank' : 'River') + ' to see it live.';
   else if (lost) note.textContent = 'The receiver is online but has not heard the sensor ' + (n.sensor_age === null ? 'since it started' : 'for ' + dur(n.sensor_age)) + '. The numbers below are the last it received, not live. Check the sensor unit: power, antenna and range.';
   else if (waiting) note.textContent = 'The receiver is online and registered but has not heard the sensor yet. Check that the sensor unit is powered and in range.';
-  $('seen').textContent = mismatch ? 'not a ' + kindName + ' node' : (lost ? 'receiver online \u00b7 sensor not heard' : (n.online ? 'updated ' + ago(n.age) : 'offline, last seen ' + ago(n.age)));
+  $('seen').textContent = mismatch ? 'not a ' + kindName + ' node' : (lost ? 'receiver online \u00b7 sensor not heard' : (n.online ? (n.age <= 10 ? 'live \u00b7 updated ' : 'updated ') + ago(n.age) : 'offline, last seen ' + ago(n.age)));
 
   var st = $('state');
   if (!n.online){ st.className = 'state s-off'; st.textContent = 'OFFLINE'; }
@@ -1363,9 +1703,132 @@ function chart(rows, n){
   $('dotpt').setAttribute('cx', lx.toFixed(1));
   $('dotpt').setAttribute('cy', ly.toFixed(1));
   $('dotpt').style.display = k ? '' : 'none';
-  $('tx0').textContent = k > 1 ? hhmm(good[0].ts) : '';
-  $('tx1').textContent = k > 1 ? hhmm(last.ts) : '';
+  var tf = chartRange === '7d' ? fmtShort : hhmm;
+  $('tx0').textContent = k > 1 ? tf(good[0].ts) : '';
+  $('tx1').textContent = k > 1 ? tf(last.ts) : '';
 }
+
+/* ---- time helpers, shared by the chart and the PDF reports ---- */
+var MON  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+var MONF = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+function pad2(x){ return (x < 10 ? '0' : '') + x; }
+function fmtTs(ts){ var d = new Date(ts * 1000); return pad2(d.getDate()) + ' ' + MON[d.getMonth()] + ' ' + d.getFullYear() + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
+function fmtDay(ts){ var d = new Date(ts * 1000); return pad2(d.getDate()) + ' ' + MON[d.getMonth()]; }
+function fmtShort(ts){ var d = new Date(ts * 1000); return pad2(d.getDate()) + '/' + pad2(d.getMonth() + 1) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
+function tzLabel(){ var o = -new Date().getTimezoneOffset(), a = Math.abs(o); return 'GMT' + (o < 0 ? '-' : '+') + Math.floor(a / 60) + (a % 60 ? ':' + pad2(a % 60) : ''); }
+function fileSlug(s){ return String(s).replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'site'; }
+
+/* The logo for the PDF: drawn from the header image onto white and turned into a JPEG. */
+function logoJpeg(){
+  try {
+    var img = document.querySelector('.logo-mark');
+    if (!img || !img.complete || !img.naturalWidth) return null;
+    var w = 360, h = Math.round(w * img.naturalHeight / img.naturalWidth);
+    var c2 = document.createElement('canvas'); c2.width = w; c2.height = h;
+    var g = c2.getContext('2d'); g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h); g.drawImage(img, 0, 0, w, h);
+    var bin = atob(c2.toDataURL('image/jpeg', 0.92).split(',')[1]), u = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    return { bytes: u, w: w, h: h };
+  } catch (e) { return null; }       // no logo is better than no report
+}
+function saveBytes(name, bytes){
+  var blob = new Blob([bytes], { type: 'application/pdf' });
+  var url = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = url; a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 1500);
+}
+
+/* ---- live chart: Live (last 30 min) or 7 days (one point per half hour) ---- */
+function markRange(){
+  Array.prototype.forEach.call($('rngSeg').children, function(b){
+    var on = b.getAttribute('data-r') === chartRange;
+    b.className = on ? 'on' : ''; b.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+  $('chartLab').textContent = chartRange === 'live' ? 'Level \u00b7 last 30 min \u00b7 live'
+                                                   : 'Level \u00b7 last ' + keepDays + ' days \u00b7 every 30 min';
+}
+$('rngSeg').addEventListener('click', function(e){
+  var r = e.target.getAttribute && e.target.getAttribute('data-r');
+  if (r !== 'live' && r !== '7d') return;
+  chartRange = r; histKey = ''; markRange();
+  if (nodes.length) draw();
+});
+markRange();
+
+/* ---- the client's PDF report: pick a day, a month or a year ---- */
+var expKind = 'day';
+function expInit(){
+  expReady = true;
+  var m = $('expM'); m.innerHTML = '';
+  for (var i = 0; i < 12; i++){ var o = document.createElement('option'); o.value = i + 1; o.textContent = MONF[i]; m.appendChild(o); }
+  var d = new Date();
+  $('expDay').value = d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  $('expM').value = d.getMonth() + 1;
+  $('expY').value = d.getFullYear();
+  var first = new Date(d.getTime() - keepDays * 86400000);
+  $('expDay').min = first.getFullYear() + '-' + pad2(first.getMonth() + 1) + '-' + pad2(first.getDate());
+  $('expDay').max = $('expDay').value;
+  $('expHint').textContent = 'A reading is recorded every 30 minutes and kept for ' + keepDays + ' days. A month or year report contains whatever is still stored.';
+  markExp();
+}
+function markExp(){
+  Array.prototype.forEach.call($('expKind').children, function(b){
+    var on = b.getAttribute('data-k') === expKind;
+    b.className = on ? 'on' : ''; b.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+  $('expDayW').hidden = expKind !== 'day';
+  $('expMW').hidden   = expKind !== 'month';
+  $('expYW').hidden   = expKind === 'day';
+}
+$('expKind').addEventListener('click', function(e){
+  var k = e.target.getAttribute && e.target.getAttribute('data-k');
+  if (k === 'day' || k === 'month' || k === 'year'){ expKind = k; markExp(); $('expMsg').textContent = ''; }
+});
+function expPeriod(){
+  var f, t, label, slug, y, m, v;
+  if (expKind === 'day'){
+    v = $('expDay').value.split('-');
+    if (v.length !== 3 || !v[0]) return { error: 'Choose a day.' };
+    y = +v[0]; m = +v[1]; var dd = +v[2];
+    f = new Date(y, m - 1, dd); t = new Date(y, m - 1, dd + 1);
+    label = 'Day: ' + pad2(dd) + ' ' + MON[m - 1] + ' ' + y; slug = y + pad2(m) + pad2(dd);
+  } else {
+    y = parseInt($('expY').value, 10);
+    if (!(y >= 2020 && y <= 2100)) return { error: 'Enter a valid year.' };
+    if (expKind === 'month'){
+      m = +$('expM').value;
+      f = new Date(y, m - 1, 1); t = new Date(y, m, 1);
+      label = 'Month: ' + MONF[m - 1] + ' ' + y; slug = y + '-' + pad2(m);
+    } else {
+      f = new Date(y, 0, 1); t = new Date(y + 1, 0, 1);
+      label = 'Year: ' + y; slug = String(y);
+    }
+  }
+  return { from: Math.floor(f.getTime() / 1000), to: Math.floor(t.getTime() / 1000), label: label, slug: slug };
+}
+$('expGo').addEventListener('click', function(){
+  var msg = $('expMsg'), btn = $('expGo');
+  msg.className = 'msg bad'; msg.textContent = '';
+  if (!nodes.some(function(n){ return n.id === current; })){ msg.textContent = 'Choose a node first.'; return; }
+  var p = expPeriod();
+  if (p.error){ msg.textContent = p.error; return; }
+  busy(btn, true, 'Preparing\u2026');
+  get('a=export&device=' + current + '&from=' + p.from + '&to=' + p.to).then(function(j){
+    busy(btn, false);
+    if (!j.rows.length){
+      msg.textContent = 'No readings were recorded for that period. Readings are kept for the last ' + j.keep_days + ' days.';
+      return;
+    }
+    var bytes = AqPdf.clientReport({
+      logo: logoJpeg(), site: j.device.name, clientCode: j.client.code, devKey: j.device.dev_key,
+      mode: j.device.mode, depthMM: j.device.depth_mm, dangerMM: j.device.danger_mm, keepDays: j.keep_days,
+      periodLabel: p.label, generatedLabel: fmtTs(j.generated), tzLabel: tzLabel(), rows: j.rows,
+      fmtTs: fmtTs, fmtTime: hhmm, fmtDay: fmtDay });
+    saveBytes('Aquaiots_' + fileSlug(j.device.name) + '_' + p.slug + '.pdf', bytes);
+    msg.className = 'msg good';
+    msg.textContent = 'Downloaded a PDF with ' + j.rows.length + ' readings for ' + p.label + '.';
+  }).catch(function(err){ busy(btn, false); msg.textContent = err.message; });
+});
 
 /* ---- administrator ----
    The only public trace of this is the #admin address. Whether anyone gets
@@ -1480,6 +1943,25 @@ function renderBoard(){
   none.textContent = adData.clients.length ? 'Nothing matches that filter.' : 'No clients have activated a device yet.';
 }
 $('adSearch').addEventListener('input', renderBoard);
+$('adPdf').addEventListener('click', function(){
+  if (!adData) return;
+  var label = { alert:'ALERT', offline:'OFFLINE', waiting:'WAITING', nosensor:'SENSOR LOST', normal:'OK' }, rows = [];
+  adData.clients.forEach(function(c){
+    var made = fmtTs(c.created).slice(0, 11);
+    if (!c.devices.length) rows.push({ client:c.code, site:'-', key:'-', kind:'-', status:'NO NODE', last:'-', activated:made });
+    c.devices.forEach(function(d){
+      rows.push({ client:c.code, site:d.name, key:d.dev_key, kind:d.mode === 1 ? 'tank' : 'river',
+                  status:label[d.state] || 'OK', last:ago(d.age), activated:made });
+    });
+  });
+  var t = adData.totals, lost = t.lost || 0;
+  // Status only. adData has no water readings, so there is nothing of the kind to print.
+  var bytes = AqPdf.adminReport({ logo: logoJpeg(), generatedLabel: fmtTs(adData.now), tzLabel: tzLabel(), rows: rows,
+    totals: [ { label:'Clients', value:t.clients }, { label:'Nodes', value:t.devices }, { label:'Reporting now', value:t.online },
+              { label:'In alert', value:t.alerts, hot:t.alerts > 0 }, { label:'Sensor lost', value:lost, hot:lost > 0 } ] });
+  var d = new Date(adData.now * 1000);
+  saveBytes('Aquaiots_fleet-status_' + d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()) + '.pdf', bytes);
+});
 $('adSeg').addEventListener('click', function(e){
   var f = e.target.getAttribute && e.target.getAttribute('data-f');
   if (!f) return;

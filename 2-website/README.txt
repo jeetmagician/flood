@@ -66,8 +66,8 @@ The tables are created automatically either way.
 
 Other settings at the top of api.php you may want to change:
 
-    const KEEP_DAYS   = 90;    // readings older than this are deleted
-    const MIN_GAP_SEC = 5;     // a device may not post faster than this
+    const KEEP_DAYS   = 7;     // half-hour history kept this many days (365 for yearly reports)
+    const MIN_GAP_SEC = 1;     // a device may not post faster than this
     const ONLINE_SEC  = 180;   // no packet for this long = offline
     const SENSOR_LOST_SEC = 30; // receiver online but sensor unheard this long = sensor lost
     const MAX_TRIES   = 6;     // wrong PINs before a client is locked out
@@ -184,6 +184,30 @@ FORGOTTEN PINS. There is no self-service reset. When a client forgets
 their PIN, ask them to read you the device key off their receiver's
 own page - only someone standing next to the device can do that - and
 then reset it for them in the database.
+
+
+---------------------------------------------------------------------
+LIVE DATA, HISTORY AND PDF REPORTS
+---------------------------------------------------------------------
+
+LIVE. The receiver now uploads every 2 seconds and the dashboard polls
+every 2 seconds, so a change shows within a few seconds. The delay IS the
+receiver's UPLOAD_SEC. Flash the current node_receiver_8266_cloud to get it.
+
+HISTORY. One reading per device per half hour (at :00 and :30) is kept
+for KEEP_DAYS days (7). Month and Year reports can only contain what is
+still stored, so raise KEEP_DAYS if you want longer reports; a year costs
+about 17,500 rows per device. The live chart uses a separate 2-hour
+buffer that trims itself.
+
+PDF. The client's dashboard has "Download a report (PDF)": choose Day,
+Month or Year and press Download. The PDF is built in the browser and
+carries the site name, client ID, device key, the period, a summary, a
+chart and a table. The administrator's board has "Download status PDF":
+status only, never water readings.
+
+Upgrading an existing site: upload the new index.html and api.php. The
+database upgrades itself on the first request; nothing to do by hand.
 
 
 ---------------------------------------------------------------------

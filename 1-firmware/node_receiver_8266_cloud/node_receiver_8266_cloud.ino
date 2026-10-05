@@ -43,7 +43,9 @@ const char* STA_PASS   = "YOUR-WIFI-PASSWORD";
 const char* CLOUD_HOST = "aquaiots.in";        // just the domain, no https://
 const char* CLOUD_PATH = "/api.php?a=ingest";
 #define CLOUD_HTTPS    1                        // 1 = https (port 443), 0 = http (80)
-#define UPLOAD_SEC     25                       // seconds between normal uploads
+#define UPLOAD_SEC     2                        // seconds between uploads: this IS the website's delay
+#define UPLOAD_RETRY_SEC 10                     // after a FAILED upload wait this long before trying again
+#define UPLOAD_TIMEOUT_MS 2500                  // never let a slow server hold the radio deaf for longer
 #define UPLOAD_ALERT   1                        // also upload the moment an alert starts
 
 const char* AP_SSID  = "FloodNode-01";
@@ -380,18 +382,51 @@ void startSTA() {
 #endif
 }
 
-// Pulls "code":"AB-C123" and "paired":true out of the server's reply
-// without dragging in a JSON library.
-void readReply(const String& r) {
-  int i = r.indexOf("\"code\":\"");
-  if (i >= 0) {
-    int a = i + 8, b = r.indexOf('"', a);
-    if (b > a && b - a < (int)sizeof(pairCode)) {
-      r.substring(a, b).toCharArray(pairCode, sizeof(pairCode));
+// Pulls "code":"AB-C123" and "paired":true out of the server's reply with plain
+// C string calls: no JSON library and no Arduino String (see the heap rule above).
+void readReply(const char* r) {
+  const char* p = strstr(r, "\"code\":\"");
+  if (p) {
+    p += 8;
+    const char* e = strchr(p, '"');
+    if (e && e > p && (size_t)(e - p) < sizeof(pairCode)) {
+      memcpy(pairCode, p, e - p);
+      pairCode[e - p] = 0;
     }
   }
-  cloudPaired = r.indexOf("\"paired\":true") >= 0;
+  cloudPaired = strstr(r, "\"paired\":true") != NULL;
 }
+
+#if CLOUD_ENABLE
+// ONE connection for the life of the sketch. A TLS handshake costs 1-3 seconds on
+// an ESP8266, and for that time the radio is not being listened to. Doing it on
+// every upload would make a 2 s upload cadence cripple the receiver, so the
+// connection is opened once and kept alive (setReuse); later uploads are a few
+// hundred ms. If it drops, the next upload simply reconnects.
+#if CLOUD_HTTPS
+WiFiClientSecure cloudClient;
+#else
+WiFiClient cloudClient;
+#endif
+HTTPClient cloudHttp;
+bool cloudClientReady = false;
+
+// Takes the server's reply into a fixed buffer. HTTPClient::writeToStream does the
+// chunked / Content-Length decoding and drains the whole body, which is also what
+// lets the connection be reused. Deliberately not http.getString(): that builds an
+// Arduino String on every upload, and at one upload every 2 s it would chew the heap.
+class ReplyBuf : public Stream {
+ public:
+  char b[160];
+  size_t n;
+  ReplyBuf() : n(0) { b[0] = 0; }
+  size_t write(uint8_t c) { if (n < sizeof(b) - 1) { b[n++] = (char)c; b[n] = 0; } return 1; }
+  size_t write(const uint8_t* p, size_t len) { for (size_t i = 0; i < len; i++) write(p[i]); return len; }
+  int available() { return 0; }
+  int read() { return -1; }
+  int peek() { return -1; }
+};
+#endif
 
 void uploadNow() {
 #if CLOUD_ENABLE
@@ -409,38 +444,61 @@ void uploadNow() {
     "\"mode\":%u,\"alert\":%d,\"rssi\":%d,\"snr\":%.1f,\"age\":%ld}",
     levelMM, gapMM, depthMM, dangerMM, mode, alert ? 1 : 0, rssi, snr, sensorAge);
 
-  HTTPClient http;
-  bool ok;
-
+  if (!cloudClientReady) {
 #if CLOUD_HTTPS
-  WiFiClientSecure tls;
-  tls.setInsecure();                 // the ESP8266 has no clock to check a cert date
-  tls.setBufferSizes(1024, 1024);    // keep the TLS buffers small enough to fit RAM
-  ok = http.begin(tls, CLOUD_HOST, 443, CLOUD_PATH, true);
+    cloudClient.setInsecure();                 // the ESP8266 has no clock to check a cert date
+    cloudClient.setBufferSizes(1024, 1024);    // keep the TLS buffers small enough to fit RAM
+#endif
+    cloudClientReady = true;
+  }
+  cloudHttp.setReuse(true);
+  cloudHttp.setTimeout(UPLOAD_TIMEOUT_MS);
+
+  bool ok;
+#if CLOUD_HTTPS
+  ok = cloudHttp.begin(cloudClient, CLOUD_HOST, 443, CLOUD_PATH, true);
 #else
-  WiFiClient plain;
-  ok = http.begin(plain, CLOUD_HOST, 80, CLOUD_PATH, false);
+  ok = cloudHttp.begin(cloudClient, CLOUD_HOST, 80, CLOUD_PATH, false);
 #endif
 
-  if (!ok) { cloudLast = -2; Serial.println("[cloud] could not open the connection"); return; }
-
-  http.setTimeout(6000);
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("X-Token", devToken);
-
-  cloudLast = http.POST((uint8_t*)body, strlen(body));
-  if (cloudLast == 200) readReply(http.getString());
-
-  Serial.print("[cloud] POST -> "); Serial.print(cloudLast);
-  if (pairCode[0]) {
-    Serial.print("   code "); Serial.print(pairCode);
-    Serial.print(cloudPaired ? "  (paired)" : "  (NOT paired yet - type this code on the website)");
+  if (!ok) {
+    cloudLast = -2; Serial.println("[cloud] could not open the connection");
+    cloudClient.stop();
+    uploadNext = millis() + (unsigned long)UPLOAD_RETRY_SEC * 1000UL;
+    return;
   }
-  Serial.println();
 
-  http.end();
+  cloudHttp.addHeader("Content-Type", "application/json");
+  cloudHttp.addHeader("X-Token", devToken);
+
+  cloudLast = cloudHttp.POST((uint8_t*)body, strlen(body));
+  if (cloudLast == 200) {
+    ReplyBuf rb;
+    cloudHttp.writeToStream(&rb);
+    readReply(rb.b);
+  }
+
+  // At one upload every 2 s the log would drown in identical lines: print on a
+  // change (status code or pair code) and otherwise once every 30 uploads.
+  static int  lastLogged = 0;
+  static char lastCode[sizeof(pairCode)] = "";
+  static uint8_t quiet = 0;
+  if (cloudLast != lastLogged || strcmp(lastCode, pairCode) != 0 || ++quiet >= 30) {
+    quiet = 0; lastLogged = cloudLast; strcpy(lastCode, pairCode);
+    Serial.print("[cloud] POST -> "); Serial.print(cloudLast);
+    if (pairCode[0]) {
+      Serial.print("   code "); Serial.print(pairCode);
+      Serial.print(cloudPaired ? "  (paired)" : "  (NOT paired yet - type this code on the website)");
+    }
+    Serial.println();
+  }
+
+  cloudHttp.end();                       // with setReuse the TCP/TLS connection stays open
+  if (cloudLast != 200) cloudClient.stop();   // but a connection that just failed must not be reused
   lastAlertSent = alert;
-  uploadNext = millis() + (unsigned long)UPLOAD_SEC * 1000UL;
+  // Success: the normal short cadence. Failure: back off, so a dead or slow server
+  // costs the radio one short stall every UPLOAD_RETRY_SEC and not one every UPLOAD_SEC.
+  uploadNext = millis() + (unsigned long)(cloudLast == 200 ? UPLOAD_SEC : UPLOAD_RETRY_SEC) * 1000UL;
 #endif
 }
 
